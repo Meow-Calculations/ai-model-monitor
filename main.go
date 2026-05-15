@@ -160,24 +160,25 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 }
 
 func autoCheckLoop(intervalSeconds int) {
-	for {
+	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
 		probingMu.Lock()
-		if !isProbing {
-			isProbing = true
+		if isProbing {
 			probingMu.Unlock()
-
-			report := runProbe()
-			latestReportMu.Lock()
-			latestReport = report
-			latestReportMu.Unlock()
-
-			probingMu.Lock()
-			isProbing = false
+			continue
 		}
+		isProbing = true
 		probingMu.Unlock()
 
-		select {
-		case <-time.After(time.Duration(intervalSeconds) * time.Second):
-		}
+		report := runProbe()
+		latestReportMu.Lock()
+		latestReport = report
+		latestReportMu.Unlock()
+
+		probingMu.Lock()
+		isProbing = false
+		probingMu.Unlock()
 	}
 }
