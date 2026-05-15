@@ -57,6 +57,7 @@ lerna-debug.log*
 .idea/
 .joycode/
 .claude/
+.claude/workspace/
 *.swp
 *.swo
 *~
