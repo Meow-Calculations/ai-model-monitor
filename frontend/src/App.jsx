@@ -1,81 +1,34 @@
 import { useState, useEffect, useCallback } from 'react'
+import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import * as api from './api'
 import {
   getStoredThemeMode,
   getStoredTimeRange,
-  setStoredThemeMode,
-  setStoredTimeRange,
   resolveTheme,
 } from './theme'
-import Dashboard from './components/Dashboard'
-import ConfigPanel from './components/ConfigPanel'
+import UserPanel from './components/UserPanel'
+import AdminPanel from './components/AdminPanel'
 import './App.css'
 
-const TAB_DASHBOARD = 'dashboard'
-const TAB_CONFIG = 'config'
-
 export default function App() {
-  const [tab, setTab] = useState(TAB_DASHBOARD)
-  const [report, setReport] = useState(null)
-  const [config, setConfig] = useState(null)
-  const [probing, setProbing] = useState(false)
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
+  )
+}
+
+function AppContent() {
+  const [setupRequired, setSetupRequired] = useState(false)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
   const [error, setError] = useState(null)
-  const [authRequired, setAuthRequired] = useState(false)
+  const [passwordInput, setPasswordInput] = useState('')
+  const [passwordConfirm, setPasswordConfirm] = useState('')
   const [tokenInput, setTokenInput] = useState(api.getAuthToken())
   const [themeMode, setThemeModeState] = useState(getStoredThemeMode)
   const [themeTimeRange, setThemeTimeRangeState] = useState(getStoredTimeRange)
   const [resolvedTheme, setResolvedTheme] = useState(() => resolveTheme(getStoredThemeMode(), getStoredTimeRange()))
-
-  const handleAPIError = useCallback((e) => {
-    if (e.status === 401) {
-      setAuthRequired(true)
-      setError('管理接口未授权，请确认服务端已设置 AI_MODEL_MONITOR_TOKEN，并输入正确令牌')
-    } else {
-      setError(e.message)
-    }
-  }, [])
-
-  const loadStatus = useCallback(async () => {
-    try {
-      const data = await api.getStatus()
-      if (data.providers) {
-        setReport(data)
-      }
-    } catch (e) {
-      if (e.status === 401) setAuthRequired(true)
-    }
-  }, [])
-
-  const handleTokenSubmit = async (e) => {
-    e.preventDefault()
-    api.setAuthToken(tokenInput.trim())
-    setAuthRequired(false)
-    setError(null)
-    await loadStatus()
-    await loadConfig()
-  }
-
-  const handleClearToken = () => {
-    api.setAuthToken('')
-    setTokenInput('')
-    setAuthRequired(true)
-    setConfig(null)
-    setReport(null)
-  }
-
-  const loadConfig = useCallback(async () => {
-    try {
-      const data = await api.getConfig()
-      setConfig(data)
-    } catch (e) {
-      handleAPIError(e)
-    }
-  }, [handleAPIError])
-
-  useEffect(() => {
-    loadStatus()
-    loadConfig()
-  }, [loadStatus, loadConfig])
 
   useEffect(() => {
     const applyTheme = () => {
@@ -83,91 +36,218 @@ export default function App() {
       setResolvedTheme(nextTheme)
       document.documentElement.dataset.theme = nextTheme
     }
-
     applyTheme()
     const interval = themeMode === 'time' ? window.setInterval(applyTheme, 60_000) : null
     const media = window.matchMedia?.('(prefers-color-scheme: dark)')
     if (themeMode === 'system' && media) {
       media.addEventListener?.('change', applyTheme)
     }
-
     return () => {
       if (interval) window.clearInterval(interval)
       if (media) media.removeEventListener?.('change', applyTheme)
     }
   }, [themeMode, themeTimeRange])
 
-  const setThemeMode = (mode) => {
-    setStoredThemeMode(mode)
-    setThemeModeState(mode)
-  }
-
-  const setThemeTimeRange = (range) => {
-    setStoredTimeRange(range)
-    setThemeTimeRangeState(range)
-  }
-
-  const handleProbe = async () => {
-    setProbing(true)
-    setError(null)
-    try {
-      const data = await api.runProbe()
-      if (data.providers) {
-        setReport(data)
-      } else if (data.status === 'already_probing') {
-        setError('探测正在进行中，请稍后')
-      } else if (data.status === 'NO_MODELS') {
-        setError('未配置任何模型，请先在「配置管理」中添加 Provider 和模型')
-        setReport(data)
+  useEffect(() => {
+    async function check() {
+      try {
+        const status = await api.getSetupStatus()
+        if (status.setup_required) {
+          setSetupRequired(true)
+          setAuthChecked(true)
+          return
+        }
+        try {
+          await api.getConfig()
+          setIsAuthenticated(true)
+        } catch (_) {
+          setIsAuthenticated(false)
+        }
+      } catch (e) {
+        setError(e.message)
       }
+      setAuthChecked(true)
+    }
+    check()
+  }, [])
+
+  const handleSetupSubmit = async (e) => {
+    e.preventDefault()
+    const password = passwordInput.trim()
+    if (password.length < 8) {
+      setError('密码至少需要 8 个字符')
+      return
+    }
+    if (password !== passwordConfirm.trim()) {
+      setError('两次输入的密码不一致')
+      return
+    }
+    try {
+      await api.setupPassword(password)
+      setSetupRequired(false)
+      setIsAuthenticated(true)
+      setPasswordInput('')
+      setPasswordConfirm('')
+      setError(null)
     } catch (e) {
-      handleAPIError(e)
-    } finally {
-      setProbing(false)
+      setError(e.body || e.message)
     }
   }
 
-  const handleSaveConfig = async (newConfig) => {
+  const handleLoginSubmit = async (e) => {
+    e.preventDefault()
     try {
-      const saved = await api.updateConfig(newConfig)
-      setConfig(saved)
+      await api.login(passwordInput)
+      setIsAuthenticated(true)
+      setPasswordInput('')
+      setError(null)
     } catch (e) {
-      handleAPIError(e)
+      setError('密码错误或登录失败')
     }
   }
 
-  const handleAddProvider = async (provider) => {
-    try {
-      await api.addProvider(provider)
-      await loadConfig()
-    } catch (e) {
-      handleAPIError(e)
-    }
+  const handleTokenSubmit = async (e) => {
+    e.preventDefault()
+    api.setAuthToken(tokenInput.trim())
+    setIsAuthenticated(true)
+    setError(null)
   }
 
-  const handleRemoveProvider = async (id) => {
+  const handleLogout = async () => {
+    api.setAuthToken('')
+    setTokenInput('')
     try {
-      await api.removeProvider(id)
-      await loadConfig()
-    } catch (e) {
-      handleAPIError(e)
-    }
-  }
-
-  const handleUpdateProvider = async (id, provider) => {
-    try {
-      await api.updateProvider(id, provider)
-      await loadConfig()
-    } catch (e) {
-      handleAPIError(e)
-    }
+      await api.logout()
+    } catch (_) {}
+    setIsAuthenticated(false)
   }
 
   return (
     <div className="app">
-      <nav className="navbar">
+      {setupRequired ? (
+        <SetupScreen error={error} passwordInput={passwordInput} setPasswordInput={setPasswordInput} passwordConfirm={passwordConfirm} setPasswordConfirm={setPasswordConfirm} onSubmit={handleSetupSubmit} />
+      ) : (
+        <>
+          <AppShell isAuthenticated={isAuthenticated} onLogout={handleLogout} />
+          <Routes>
+            <Route path="/" element={<UserPanel />} />
+            <Route
+              path="/admin"
+              element={
+                isAuthenticated
+                  ? <AdminPanel onLogout={handleLogout} />
+                  : <Navigate to="/admin/login" replace />
+              }
+            />
+            <Route
+              path="/admin/login"
+              element={
+                isAuthenticated
+                  ? <Navigate to="/admin" replace />
+                  : <AdminLogin
+                      onLogin={handleLoginSubmit}
+                      onTokenSubmit={handleTokenSubmit}
+                      passwordInput={passwordInput}
+                      setPasswordInput={setPasswordInput}
+                      tokenInput={tokenInput}
+                      setTokenInput={setTokenInput}
+                      error={error}
+                      setError={setError}
+                    />
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SetupScreen({ error, passwordInput, setPasswordInput, passwordConfirm, setPasswordConfirm, onSubmit }) {
+  return (
+    <>
+      <AppShell isAuthenticated={false} onLogout={null} />
+      <div className="auth-overlay" role="dialog" aria-label="初始化设置">
+        <div className="auth-card glass-card">
+          <div className="auth-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </div>
+          <h2 className="auth-title">初始化管理密码</h2>
+          <p className="auth-desc">首次使用前请设置管理密码，用于访问管理面板</p>
+          {error && <div className="auth-error" role="alert">{error}</div>}
+          <form className="auth-form" onSubmit={onSubmit}>
+            <div className="form-field">
+              <label htmlFor="setup-password">管理密码</label>
+              <input id="setup-password" type="password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} placeholder="至少 8 个字符" autoFocus />
+            </div>
+            <div className="form-field">
+              <label htmlFor="setup-confirm">确认密码</label>
+              <input id="setup-confirm" type="password" value={passwordConfirm} onChange={e => setPasswordConfirm(e.target.value)} placeholder="再次输入密码" />
+            </div>
+            <button type="submit" className="btn-primary">完成初始化</button>
+          </form>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function AdminLogin({ onLogin, onTokenSubmit, passwordInput, setPasswordInput, tokenInput, setTokenInput, error, setError }) {
+  const [localError, setLocalError] = useState(error)
+
+  useEffect(() => {
+    setLocalError(error)
+  }, [error])
+
+  return (
+    <div className="auth-overlay" role="dialog" aria-label="管理面板登录">
+      <div className="auth-card glass-card">
+        <div className="auth-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <h2 className="auth-title">管理面板登录</h2>
+        <p className="auth-desc">输入管理密码或令牌以访问管理功能</p>
+        {localError && <div className="auth-error" role="alert">{localError}</div>}
+        <form className="auth-form" onSubmit={onLogin}>
+          <div className="form-field">
+            <label htmlFor="admin-password">管理密码</label>
+            <input id="admin-password" type="password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} placeholder="输入管理密码" autoFocus />
+          </div>
+          <button type="submit" className="btn-primary">登录</button>
+        </form>
+        <div className="auth-divider"><span>或</span></div>
+        <form className="auth-form" onSubmit={onTokenSubmit}>
+          <div className="form-field">
+            <label htmlFor="admin-token">兼容令牌</label>
+            <input id="admin-token" type="password" value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="AI_MODEL_MONITOR_TOKEN" />
+          </div>
+          <button type="submit" className="btn-secondary">使用令牌</button>
+        </form>
+        <div className="auth-footer">
+          <Link to="/" className="auth-link">返回用户面板</Link>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AppShell({ isAuthenticated, onLogout }) {
+  const location = useLocation()
+  const isAdmin = location.pathname.startsWith('/admin')
+
+  return (
+    <>
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      <nav className="navbar" role="navigation" aria-label="主导航">
+        <div className="nav-inner">
         <div className="nav-brand">
-          <div className="nav-icon">
+          <div className="nav-icon" aria-hidden="true">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M5 12.55a11 11 0 0 1 14.08 0" />
               <path d="M1.42 9a16 16 0 0 1 21.16 0" />
@@ -177,92 +257,59 @@ export default function App() {
           </div>
           <span className="nav-title">AI Model Monitor</span>
         </div>
-        <div className="nav-tabs">
-          <button
-            className={`nav-tab ${tab === TAB_DASHBOARD ? 'active' : ''}`}
-            onClick={() => setTab(TAB_DASHBOARD)}
+
+        <div className="nav-routes">
+          <Link
+            to="/"
+            className={`nav-route ${!isAdmin ? 'active' : ''}`}
+            aria-current={!isAdmin ? 'page' : undefined}
           >
-            状态看板
-          </button>
-          <button
-            className={`nav-tab ${tab === TAB_CONFIG ? 'active' : ''}`}
-            onClick={() => setTab(TAB_CONFIG)}
-          >
-            配置管理
-          </button>
-        </div>
-        <div className="nav-actions">
-          <button
-            className="theme-pill"
-            onClick={() => setThemeMode(resolvedTheme === 'dark' ? 'light' : 'dark')}
-            title={`当前主题：${resolvedTheme === 'dark' ? '夜间' : '日间'}`}
-          >
-            {resolvedTheme === 'dark' ? '夜间' : '日间'}
-          </button>
-          {api.getAuthToken() && (
-            <button className="nav-token-clear" onClick={handleClearToken}>清除令牌</button>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+              <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+              <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+              <line x1="12" y1="20" x2="12.01" y2="20" />
+            </svg>
+            用户面板
+          </Link>
+          {isAuthenticated ? (
+            <Link
+              to="/admin"
+              className={`nav-route ${isAdmin ? 'active' : ''}`}
+              aria-current={isAdmin ? 'page' : undefined}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              管理面板
+            </Link>
+          ) : (
+            <Link
+              to="/admin/login"
+              className={`nav-route ${isAdmin ? 'active' : ''}`}
+              aria-current={isAdmin ? 'page' : undefined}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              管理面板
+            </Link>
           )}
-          <button
-            className="btn-probe"
-            onClick={handleProbe}
-            disabled={probing || authRequired}
-          >
-            {probing ? (
-              <>
-                <span className="spinner" />
-                检测中...
-              </>
-            ) : (
-              <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                </svg>
-                开始探测
-              </>
-            )}
+        </div>
+
+        {isAuthenticated && onLogout && (
+          <button className="nav-logout" onClick={onLogout} aria-label="退出登录">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            退出
           </button>
+        )}
         </div>
       </nav>
-
-      {error && (
-        <div className="error-banner">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="error-close">&times;</button>
-        </div>
-      )}
-
-      {authRequired && (
-        <form className="auth-panel" onSubmit={handleTokenSubmit}>
-          <label>访问令牌</label>
-          <input
-            type="password"
-            value={tokenInput}
-            onChange={e => setTokenInput(e.target.value)}
-            placeholder="输入 AI_MODEL_MONITOR_TOKEN"
-            autoFocus
-          />
-          <button type="submit">保存并重试</button>
-        </form>
-      )}
-
-      <main className="main-content">
-        {tab === TAB_DASHBOARD ? (
-          <Dashboard report={report} onProbe={handleProbe} probing={probing} />
-        ) : (
-          <ConfigPanel
-            config={config}
-            onSave={handleSaveConfig}
-            onAddProvider={handleAddProvider}
-            onRemoveProvider={handleRemoveProvider}
-            onUpdateProvider={handleUpdateProvider}
-            themeMode={themeMode}
-            resolvedTheme={resolvedTheme}
-            themeTimeRange={themeTimeRange}
-            onThemeModeChange={setThemeMode}
-            onThemeTimeRangeChange={setThemeTimeRange}
-          />
-        )}
-      </main>
-    </div>
+    </>
   )
 }

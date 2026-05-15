@@ -36,6 +36,11 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 		}
 	}), adminToken)
 
+	mux.HandleFunc("/api/setup-status", handleSetupStatus)
+	mux.HandleFunc("/api/setup", handleSetup)
+	mux.HandleFunc("/api/login", handleLogin)
+	mux.HandleFunc("/api/logout", handleLogout)
+
 	for _, path := range []string{
 		"/api/admin/config",
 		"/api/admin/providers",
@@ -51,6 +56,87 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/history", handleHistory)
+}
+
+func handleSetupStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"setup_required": !IsSetupComplete()})
+}
+
+func handleSetup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if IsSetupComplete() {
+		http.Error(w, "setup already completed", http.StatusConflict)
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := SaveAdminPassword(req.Password); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	issueSession(w)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !IsSetupComplete() {
+		writeAuthError(w, "setup required")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !VerifyAdminPassword(req.Password) {
+		writeAuthError(w, "invalid password")
+		return
+	}
+	issueSession(w)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if c, err := r.Cookie("amm_session"); err == nil {
+		ClearSession(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{Name: "amm_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func issueSession(w http.ResponseWriter) {
+	token, err := CreateSession()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "amm_session", Value: token, Path: "/", MaxAge: int(sessionTTL.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode})
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -436,20 +522,27 @@ func adminAuthMiddleware(next http.Handler, token string) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if token == "" {
-			writeAuthError(w, "admin token is not configured")
+		if !IsSetupComplete() {
+			writeAuthError(w, "setup required")
 			return
 		}
-		if !validToken(r, token) {
-			writeAuthError(w, "unauthorized")
+		if validSession(r) || validToken(r, token) {
+			next.ServeHTTP(w, r)
 			return
 		}
-
-		next.ServeHTTP(w, r)
+		writeAuthError(w, "unauthorized")
 	})
 }
 
+func validSession(r *http.Request) bool {
+	c, err := r.Cookie("amm_session")
+	return err == nil && ValidateSession(c.Value)
+}
+
 func validToken(r *http.Request, token string) bool {
+	if token == "" {
+		return false
+	}
 	provided := r.Header.Get("X-API-Key")
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 		provided = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
@@ -466,7 +559,14 @@ func writeAuthError(w http.ResponseWriter, message string) {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 			if r.Method == "OPTIONS" {

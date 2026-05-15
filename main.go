@@ -54,13 +54,9 @@ func main() {
 	mux := http.NewServeMux()
 	registerAPIRoutes(mux, authToken)
 
-	apiHandler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mux.ServeHTTP(w, r)
-	}), authToken)
-
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			apiHandler.ServeHTTP(w, r)
+			mux.ServeHTTP(w, r)
 			return
 		}
 		serveStatic(w, r)

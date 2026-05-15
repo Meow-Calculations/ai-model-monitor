@@ -12,7 +12,8 @@
 - **延迟曲线** — SVG 平滑贝塞尔曲线展示延迟趋势
 - **自动检测** — 可配置间隔自动定期探测
 - **Provider 管理** — Web UI 动态增删改 Provider 和模型
-- **管理接口鉴权** — `/api/admin/*` 强制 Token 鉴权，防止未授权管理操作
+- **首次初始化密码** — 首次运行必须在网页设置管理密码后才能使用管理功能
+- **管理接口鉴权** — `/api/admin/*` 强制登录态鉴权，兼容环境变量 Token
 - **主题切换** — 支持日间、夜间、跟随系统和按时间自动切换
 - **毛玻璃主题** — 网格背景 + 辐射渐变 + 毛玻璃效果
 
@@ -32,7 +33,8 @@
 ```text
 ai-model-monitor/
 ├── main.go                      # 入口：HTTP 服务、静态文件托管、自动检测
-├── api.go                       # REST API 路由、CORS、可选鉴权
+├── api.go                       # REST API 路由、CORS、鉴权与初始化接口
+├── auth.go                      # 管理密码哈希、会话创建与校验
 ├── models.go                    # 数据模型定义
 ├── config.go                    # SQLite 配置读写、Provider CRUD、配置校验
 ├── probe.go                     # 模型探测逻辑（含重试机制）
@@ -45,9 +47,9 @@ ai-model-monitor/
 ├── .gitignore
 └── frontend/                    # React 前端
     ├── src/
-    │   ├── App.jsx              # 主应用：导航栏、Tab 切换、状态管理、令牌输入
-    │   ├── App.css              # 全局样式（深色毛玻璃主题）
-    │   ├── api.js               # API 客户端、Bearer Token、Provider 图标映射
+    │   ├── App.jsx              # 主应用：初始化、登录、导航栏、Tab 切换、状态管理
+    │   ├── App.css              # 全局样式（亮/暗主题 + 毛玻璃效果）
+    │   ├── api.js               # API 客户端、会话 Cookie、兼容 Token、Provider 图标映射
     │   ├── main.jsx             # 入口
     │   └── components/
     │       ├── Dashboard.jsx    # 状态看板
@@ -76,7 +78,7 @@ go build -o ai-model-monitor.exe .
 ./ai-model-monitor.exe
 ```
 
-浏览器打开 `http://localhost:8080`
+浏览器打开 `http://localhost:8080`。首次运行会进入初始化页面，需要先设置管理密码；之后使用该密码登录管理界面。
 
 ### 方式 2：开发模式
 
@@ -116,6 +118,10 @@ go build -o ai-model-monitor.exe .
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/setup-status` | 查询是否需要首次初始化 |
+| POST | `/api/setup` | 首次设置管理密码，成功后写入登录会话 |
+| POST | `/api/login` | 使用管理密码登录 |
+| POST | `/api/logout` | 退出登录并清除会话 |
 | GET | `/api/admin/config` | 获取全局配置（API Key 已脱敏，需鉴权） |
 | PUT | `/api/admin/config` | 更新全局配置（需鉴权） |
 | GET | `/api/admin/providers` | 获取 Provider 列表（API Key 已脱敏，需鉴权） |
@@ -126,7 +132,7 @@ go build -o ai-model-monitor.exe .
 | GET | `/api/status` | 获取最新探测报告 |
 | GET | `/api/history?key=providerID::model` | 查询历史记录 |
 
-兼容说明：旧的 `/api/config`、`/api/providers`、`/api/probe` 路径仍保留为兼容别名，但同样需要管理 Token；新接入请使用 `/api/admin/*`。
+兼容说明：旧的 `/api/config`、`/api/providers`、`/api/probe` 路径仍保留为兼容别名，但同样需要完成首次初始化并通过管理鉴权；新接入请使用 `/api/admin/*`。
 
 ## 配置项
 
@@ -162,27 +168,26 @@ API Key 仅用于服务端向模型供应商发起探测请求。读取配置或
 - 清空 API Key 字段：删除原 API Key
 - 输入新值：替换为新 API Key
 
-## 访问鉴权
+## 首次初始化与访问鉴权
 
-管理接口 `/api/admin/*` 必须设置环境变量 `AI_MODEL_MONITOR_TOKEN` 后才能访问；如果服务端未配置 Token，管理接口也会返回 401，不会默认开放。
+首次运行时，后端 SQLite 中还没有管理员密码。浏览器打开页面后会先进入初始化界面，必须设置管理密码后才能使用配置管理、Provider 管理和手动探测等管理功能。
+
+初始化完成后：
+
+- 管理密码只以 PBKDF2-SHA256 哈希形式保存在 SQLite 中，不保存明文。
+- 登录成功后，后端通过 HttpOnly Cookie 保存会话。
+- 退出登录会清除服务端会话。
+- 管理接口 `/api/admin/*` 和旧管理兼容路径都必须通过登录态或兼容 Token 鉴权。
+
+`AI_MODEL_MONITOR_TOKEN` 仍作为自动化或兼容接入方式保留，但不能绕过首次网页初始化；首次设置管理密码后，可继续使用 Bearer Token 或 `X-API-Key` 访问管理接口：
 
 ```bash
 AI_MODEL_MONITOR_TOKEN=your-random-token ./ai-model-monitor
-```
-
-前端会提示输入访问令牌，并使用 Bearer Token 调用管理接口：
-
-```bash
 curl -H "Authorization: Bearer your-random-token" http://localhost:8080/api/admin/config
-```
-
-后端同时兼容 `X-API-Key`：
-
-```bash
 curl -H "X-API-Key: your-random-token" http://localhost:8080/api/admin/config
 ```
 
-`/api/status`、`/api/history` 是核心监控读接口，保持兼容；如需暴露到公网，建议放在 HTTPS 反向代理后面。
+`/api/status`、`/api/history` 是核心监控读接口，保持公开兼容；如需暴露到公网，建议放在 HTTPS 反向代理后面。
 
 ## 主题模式
 
@@ -210,8 +215,10 @@ go build -o ai-model-monitor.exe .
 
 建议手动验证：
 
-- 未配置或未输入 Token 时，`/api/admin/config` 返回 401。
-- 正确 Bearer Token 或 `X-API-Key` 可访问 `/api/admin/config`。
+- 首次启动空数据库时，网页只显示设置管理密码界面。
+- 未完成首次初始化时，`/api/admin/config` 返回 401。
+- 设置管理密码并登录后可访问配置管理。
+- 首次初始化完成后，正确 Bearer Token 或 `X-API-Key` 可访问 `/api/admin/config`。
 - 配置管理中可新增、编辑、删除 Provider。
 - 编辑 Provider 时保持 `********` 不会覆盖原 API Key，清空字段才删除。
 - 手动探测、历史记录、自动检测仍能正常工作。
@@ -219,11 +226,12 @@ go build -o ai-model-monitor.exe .
 
 ## 数据存储
 
-所有运行时数据存储在 `data/monitor.db`（SQLite），包含三张表：
+所有运行时数据存储在 `data/monitor.db`（SQLite），包含以下主要数据：
 
-- **config** — 全局配置键值对
+- **config** — 全局配置键值对，也保存管理员密码哈希
 - **providers** — Provider 信息
 - **history** — 探测历史记录
+- **sessions** — 管理登录会话哈希与过期时间
 
 首次启动时，如存在旧的 `config.yaml` 会自动迁移到 SQLite。请不要将包含真实 API Key 的本地配置文件提交到 Git。
 

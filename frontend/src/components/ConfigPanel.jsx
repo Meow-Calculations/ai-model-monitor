@@ -155,6 +155,8 @@ function ThemeSettings({ mode, resolvedTheme, timeRange, onModeChange, onTimeRan
               type="button"
               className={`theme-mode-card ${mode === item.value ? 'active' : ''}`}
               onClick={() => onModeChange(item.value)}
+              aria-pressed={mode === item.value}
+              aria-label={`${item.label}：${item.description}`}
             >
               <strong>{item.label}</strong>
               <span>{item.description}</span>

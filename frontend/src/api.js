@@ -24,6 +24,7 @@ async function request(path, options = {}, base = API_BASE) {
   const res = await fetch(url, {
     ...options,
     headers,
+    credentials: 'include',
   })
   if (!res.ok) {
     const text = await res.text()
@@ -37,6 +38,28 @@ async function request(path, options = {}, base = API_BASE) {
 
 function adminRequest(path, options = {}) {
   return request(path, options, ADMIN_API_BASE)
+}
+
+export function getSetupStatus() {
+  return request('/setup-status')
+}
+
+export function setupPassword(password) {
+  return request('/setup', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+}
+
+export function login(password) {
+  return request('/login', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+}
+
+export function logout() {
+  return request('/logout', { method: 'POST' })
 }
 
 export function getConfig() {
