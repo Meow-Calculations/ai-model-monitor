@@ -10,7 +10,7 @@ permissions:
 
 env:
   GO_VERSION: '1.26'
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
   PROJECT_NAME: ai-model-monitor
 
 jobs:
@@ -19,10 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -48,7 +50,7 @@ jobs:
           echo "Built ${FILE_COUNT} static files"
 
       - name: Upload Frontend Assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-assets
           path: static/
@@ -123,16 +125,18 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Download Frontend Assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-assets
           path: static/
@@ -189,7 +193,7 @@ jobs:
           echo "Built: ${BINARY_NAME} (${SIZE})"
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PROJECT_NAME }}-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: dist/${{ env.PROJECT_NAME }}-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
@@ -201,7 +205,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Determine Version
         id: version
@@ -210,7 +216,7 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts/
           pattern: ${{ env.PROJECT_NAME }}-*
@@ -233,7 +239,7 @@ jobs:
           cat ../checksums-sha256.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ steps.version.outputs.tag }}
           draft: false
