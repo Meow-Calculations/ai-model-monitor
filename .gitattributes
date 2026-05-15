@@ -1,0 +1,9 @@
+# === 自动生成文件 ===
+package-lock.json                    linguist-generated
+go.sum                               linguist-generated
+
+# === 文档 ===
+*.md                                 linguist-documentation
+
+# === 图标资源 ===
+*.svg                                linguist-documentation

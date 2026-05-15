@@ -1,0 +1,79 @@
+# === 构建产物 / 输出目录 ===
+ai-model-monitor
+ai-model-monitor.exe
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# === 运行时数据 ===
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# === Node.js 前端依赖 / 构建产物 ===
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/.cache/
+frontend/coverage/
+frontend/.nyc_output/
+
+# === 前端构建后由 Go 托管的静态资源 ===
+static/
+
+# === 本地环境变量 / 密钥 ===
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# === 包管理器缓存 / 调试文件 ===
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# === IDE / 编辑器 ===
+.vscode/
+.idea/
+.joycode/
+.claude/
+.claude/workspace/
+*.swp
+*.swo
+*~
+
+# === 操作系统 ===
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# === 日志 ===
+*.log
+logs/
+
+# === 临时文件 ===
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
