@@ -4,6 +4,8 @@ import * as api from './api'
 import {
   getStoredThemeMode,
   getStoredTimeRange,
+  setStoredThemeMode,
+  setStoredTimeRange,
   resolveTheme,
 } from './theme'
 import UserPanel from './components/UserPanel'
@@ -30,6 +32,16 @@ function AppContent() {
   const [themeTimeRange, setThemeTimeRangeState] = useState(getStoredTimeRange)
   const [resolvedTheme, setResolvedTheme] = useState(() => resolveTheme(getStoredThemeMode(), getStoredTimeRange()))
 
+  const setThemeMode = (mode) => {
+    setStoredThemeMode(mode)
+    setThemeModeState(mode)
+  }
+
+  const setThemeTimeRange = (range) => {
+    setStoredTimeRange(range)
+    setThemeTimeRangeState(range)
+  }
+
   useEffect(() => {
     const applyTheme = () => {
       const nextTheme = resolveTheme(themeMode, themeTimeRange)
@@ -42,9 +54,15 @@ function AppContent() {
     if (themeMode === 'system' && media) {
       media.addEventListener?.('change', applyTheme)
     }
+    const onThemeChange = () => {
+      setThemeMode(getStoredThemeMode())
+      setThemeTimeRange(getStoredTimeRange())
+    }
+    window.addEventListener('themechange', onThemeChange)
     return () => {
       if (interval) window.clearInterval(interval)
       if (media) media.removeEventListener?.('change', applyTheme)
+      window.removeEventListener('themechange', onThemeChange)
     }
   }, [themeMode, themeTimeRange])
 
@@ -128,7 +146,13 @@ function AppContent() {
         <SetupScreen error={error} passwordInput={passwordInput} setPasswordInput={setPasswordInput} passwordConfirm={passwordConfirm} setPasswordConfirm={setPasswordConfirm} onSubmit={handleSetupSubmit} />
       ) : (
         <>
-          <AppShell isAuthenticated={isAuthenticated} onLogout={handleLogout} />
+          <AppShell
+            isAuthenticated={isAuthenticated}
+            onLogout={handleLogout}
+            themeMode={themeMode}
+            resolvedTheme={resolvedTheme}
+            onThemeToggle={() => setThemeMode(resolvedTheme === 'dark' ? 'light' : 'dark')}
+          />
           <Routes>
             <Route path="/" element={<UserPanel />} />
             <Route
@@ -167,7 +191,7 @@ function AppContent() {
 function SetupScreen({ error, passwordInput, setPasswordInput, passwordConfirm, setPasswordConfirm, onSubmit }) {
   return (
     <>
-      <AppShell isAuthenticated={false} onLogout={null} />
+      <AppShell isAuthenticated={false} onLogout={null} themeMode={null} resolvedTheme={null} onThemeToggle={null} />
       <div className="auth-overlay" role="dialog" aria-label="初始化设置">
         <div className="auth-card glass-card">
           <div className="auth-icon">
@@ -237,7 +261,7 @@ function AdminLogin({ onLogin, onTokenSubmit, passwordInput, setPasswordInput, t
   )
 }
 
-function AppShell({ isAuthenticated, onLogout }) {
+function AppShell({ isAuthenticated, onLogout, themeMode, resolvedTheme, onThemeToggle }) {
   const location = useLocation()
   const isAdmin = location.pathname.startsWith('/admin')
 
@@ -297,6 +321,33 @@ function AppShell({ isAuthenticated, onLogout }) {
             </Link>
           )}
         </div>
+
+        {onThemeToggle && (
+          <button
+            className="theme-pill"
+            onClick={onThemeToggle}
+            title={`当前主题：${resolvedTheme === 'dark' ? '夜间' : '日间'}`}
+            aria-label={`切换主题，当前为${resolvedTheme === 'dark' ? '夜间' : '日间'}模式`}
+          >
+            {resolvedTheme === 'dark' ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="5" />
+                <line x1="12" y1="1" x2="12" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="23" />
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                <line x1="1" y1="12" x2="3" y2="12" />
+                <line x1="21" y1="12" x2="23" y2="12" />
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+              </svg>
+            )}
+          </button>
+        )}
 
         {isAuthenticated && onLogout && (
           <button className="nav-logout" onClick={onLogout} aria-label="退出登录">

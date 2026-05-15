@@ -16,9 +16,6 @@ export default function AdminPanel({ onLogout }) {
   const [config, setConfig] = useState(null)
   const [probing, setProbing] = useState(false)
   const [error, setError] = useState(null)
-  const [themeMode, setThemeModeState] = useState(getStoredThemeMode)
-  const [themeTimeRange, setThemeTimeRangeState] = useState(getStoredTimeRange)
-  const [resolvedTheme, setResolvedTheme] = useState(() => resolveTheme(getStoredThemeMode(), getStoredTimeRange()))
 
   const handleAPIError = useCallback((e) => {
     if (e.status === 401) {
@@ -54,34 +51,6 @@ export default function AdminPanel({ onLogout }) {
     loadStatus()
     loadConfig()
   }, [loadStatus, loadConfig])
-
-  useEffect(() => {
-    const applyTheme = () => {
-      const nextTheme = resolveTheme(themeMode, themeTimeRange)
-      setResolvedTheme(nextTheme)
-      document.documentElement.dataset.theme = nextTheme
-    }
-    applyTheme()
-    const interval = themeMode === 'time' ? window.setInterval(applyTheme, 60_000) : null
-    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
-    if (themeMode === 'system' && media) {
-      media.addEventListener?.('change', applyTheme)
-    }
-    return () => {
-      if (interval) window.clearInterval(interval)
-      if (media) media.removeEventListener?.('change', applyTheme)
-    }
-  }, [themeMode, themeTimeRange])
-
-  const setThemeMode = (mode) => {
-    setStoredThemeMode(mode)
-    setThemeModeState(mode)
-  }
-
-  const setThemeTimeRange = (range) => {
-    setStoredTimeRange(range)
-    setThemeTimeRangeState(range)
-  }
 
   const handleProbe = async () => {
     setProbing(true)
@@ -187,30 +156,6 @@ export default function AdminPanel({ onLogout }) {
             </div>
             <div className="panel-actions">
               <button
-                className="theme-pill"
-                onClick={() => setThemeMode(resolvedTheme === 'dark' ? 'light' : 'dark')}
-                title={`当前主题：${resolvedTheme === 'dark' ? '夜间' : '日间'}`}
-                aria-label={`切换主题，当前为${resolvedTheme === 'dark' ? '夜间' : '日间'}模式`}
-              >
-                {resolvedTheme === 'dark' ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                  </svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="5" />
-                    <line x1="12" y1="1" x2="12" y2="3" />
-                    <line x1="12" y1="21" x2="12" y2="23" />
-                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                    <line x1="1" y1="12" x2="3" y2="12" />
-                    <line x1="21" y1="12" x2="23" y2="12" />
-                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                  </svg>
-                )}
-              </button>
-              <button
                 className="btn-probe"
                 onClick={handleProbe}
                 disabled={probing}
@@ -269,11 +214,11 @@ export default function AdminPanel({ onLogout }) {
             onAddProvider={handleAddProvider}
             onRemoveProvider={handleRemoveProvider}
             onUpdateProvider={handleUpdateProvider}
-            themeMode={themeMode}
-            resolvedTheme={resolvedTheme}
-            themeTimeRange={themeTimeRange}
-            onThemeModeChange={setThemeMode}
-            onThemeTimeRangeChange={setThemeTimeRange}
+            themeMode={getStoredThemeMode()}
+            resolvedTheme={resolveTheme(getStoredThemeMode(), getStoredTimeRange())}
+            themeTimeRange={getStoredTimeRange()}
+            onThemeModeChange={(mode) => { setStoredThemeMode(mode); window.dispatchEvent(new CustomEvent('themechange')) }}
+            onThemeTimeRangeChange={(range) => { setStoredTimeRange(range); window.dispatchEvent(new CustomEvent('themechange')) }}
           />
         </div>
       </main>

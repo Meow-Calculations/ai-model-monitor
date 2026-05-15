@@ -1298,6 +1298,15 @@ body {
   gap: 6px;
 }
 
+.form-field.form-field--toggle {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  min-height: 44px;
+  padding: 2px 0;
+}
+
 .form-field label {
   font-size: 12px;
   font-weight: 700;
@@ -1338,19 +1347,79 @@ body {
   line-height: 1.4;
 }
 
-.checkbox-row {
+.toggle-row {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-height: var(--control-height);
+  align-items: center;
   cursor: pointer;
 }
 
-.checkbox-row input {
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
-  accent-color: var(--color-ok);
+.form-field input.toggle {
+  width: 46px;
+  height: 26px;
+  min-height: unset;
+  padding: 0;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 46px;
+  height: 26px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.toggle:checked {
+  background: rgba(24, 231, 141, 0.18);
+  border-color: rgba(24, 231, 141, 0.35);
+  box-shadow: inset 0 1px 3px rgba(24, 231, 141, 0.1), 0 0 12px rgba(24, 231, 141, 0.1);
+}
+
+.toggle:checked::after {
+  left: 22px;
+  background: var(--color-ok);
+  box-shadow: 0 0 10px rgba(24, 231, 141, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.toggle:checked:hover {
+  border-color: rgba(24, 231, 141, 0.5);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--color-ok);
+  outline-offset: 3px;
 }
 
 .theme-mode-grid {

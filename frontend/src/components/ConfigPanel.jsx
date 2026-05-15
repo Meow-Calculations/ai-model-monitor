@@ -201,16 +201,16 @@ function GeneralSettings({ config, onChange }) {
       </div>
       <div className="settings-card-body form-grid">
         {fields.map(field => (
-          <div key={field.key} className="form-field">
+          <div key={field.key} className={`form-field${field.type === 'checkbox' ? ' form-field--toggle' : ''}`}>
             <label>{field.label}</label>
             {field.type === 'checkbox' ? (
-              <label className="checkbox-row">
+              <label className="toggle-row">
                 <input
                   type="checkbox"
+                  className="toggle"
                   checked={config[field.key] ?? field.default}
                   onChange={e => onChange(field.key, e.target.checked)}
                 />
-                <span>{config[field.key] ? '已开启' : '已关闭'}</span>
               </label>
             ) : (
               <input
