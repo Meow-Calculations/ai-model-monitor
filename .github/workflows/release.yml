@@ -73,11 +73,6 @@ jobs:
             arch: x64
             ext: .exe
           - goos: windows
-            goarch: arm
-            platform: windows
-            arch: arm
-            ext: .exe
-          - goos: windows
             goarch: arm64
             platform: windows
             arch: arm64
