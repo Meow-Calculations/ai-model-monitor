@@ -1,0 +1,252 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: '1.26'
+  NODE_VERSION: '20'
+  PROJECT_NAME: ai-model-monitor
+
+jobs:
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          echo "::group::npm ci"
+          cd frontend && npm ci
+          echo "::endgroup::"
+
+      - name: Build Frontend
+        run: |
+          echo "::group::npm run build"
+          cd frontend && npm run build
+          echo "::endgroup::"
+          echo "Verifying static output..."
+          if [ ! -d "../static" ]; then
+            echo "::error::static/ directory not found after build"
+            exit 1
+          fi
+          FILE_COUNT=$(find ../static -type f | wc -l)
+          echo "Built ${FILE_COUNT} static files"
+
+      - name: Upload Frontend Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-assets
+          path: static/
+          retention-days: 1
+
+  build-binaries:
+    name: Build ${{ matrix.platform }}/${{ matrix.arch }}
+    needs: build-frontend
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: "386"
+            platform: windows
+            arch: x86
+            ext: .exe
+          - goos: windows
+            goarch: amd64
+            platform: windows
+            arch: x64
+            ext: .exe
+          - goos: windows
+            goarch: arm
+            platform: windows
+            arch: arm
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            platform: windows
+            arch: arm64
+            ext: .exe
+          - goos: linux
+            goarch: "386"
+            platform: linux
+            arch: x86
+            ext: ""
+          - goos: linux
+            goarch: amd64
+            platform: linux
+            arch: x64
+            ext: ""
+          - goos: linux
+            goarch: arm
+            platform: linux
+            arch: arm
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            platform: linux
+            arch: arm64
+            ext: ""
+          - goos: linux
+            goarch: riscv64
+            platform: linux
+            arch: riscv64
+            ext: ""
+          - goos: linux
+            goarch: loong64
+            platform: linux
+            arch: loong64
+            ext: ""
+          - goos: darwin
+            goarch: amd64
+            platform: macos
+            arch: x64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            platform: macos
+            arch: arm64
+            ext: ""
+    env:
+      CGO_ENABLED: 0
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download Frontend Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-assets
+          path: static/
+
+      - name: Verify Frontend Assets
+        run: |
+          if [ ! -d "static" ] || [ -z "$(ls -A static)" ]; then
+            echo "::error::Frontend assets missing or empty"
+            exit 1
+          fi
+          echo "Frontend assets ready ($(find static -type f | wc -l) files)"
+
+      - name: Download Go Dependencies
+        run: |
+          echo "::group::go mod download"
+          go mod download
+          echo "::endgroup::"
+
+      - name: Verify Go Module
+        run: |
+          echo "::group::go vet"
+          go vet ./...
+          echo "::endgroup::"
+
+      - name: Determine Version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${TAG}"
+
+      - name: Build Binary
+        env:
+          BINARY_NAME: ${{ env.PROJECT_NAME }}-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
+        run: |
+          echo "::group::go build → ${BINARY_NAME}"
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.tag }} -X main.BuildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            -o "./dist/${BINARY_NAME}" \
+            .
+          echo "::endgroup::"
+
+      - name: Verify Binary
+        env:
+          BINARY_NAME: ${{ env.PROJECT_NAME }}-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
+        run: |
+          BINARY_PATH="./dist/${BINARY_NAME}"
+          if [ ! -f "${BINARY_PATH}" ]; then
+            echo "::error::Binary not found: ${BINARY_PATH}"
+            exit 1
+          fi
+          SIZE=$(du -h "${BINARY_PATH}" | cut -f1)
+          echo "Built: ${BINARY_NAME} (${SIZE})"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/${{ env.PROJECT_NAME }}-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
+          retention-days: 1
+
+  release:
+    name: Create GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine Version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts/
+          pattern: ${{ env.PROJECT_NAME }}-*
+          merge-multiple: true
+
+      - name: List Release Files
+        run: |
+          echo "=== Release Artifacts ==="
+          ls -lh release-artifacts/
+          echo ""
+          echo "=== Supported Platforms ==="
+          ls release-artifacts/ | sort
+
+      - name: Generate Checksums
+        run: |
+          cd release-artifacts
+          sha256sum * > ../checksums-sha256.txt
+          md5sum * > ../checksums-md5.txt
+          echo "=== SHA256 Checksums ==="
+          cat ../checksums-sha256.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.version.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.tag, '-rc') || contains(steps.version.outputs.tag, '-beta') || contains(steps.version.outputs.tag, '-alpha') }}
+          generate_release_notes: true
+          files: |
+            release-artifacts/*
+            checksums-sha256.txt
+            checksums-md5.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

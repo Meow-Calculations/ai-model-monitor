@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+)
+
 var staticDir string
 
 func main() {
