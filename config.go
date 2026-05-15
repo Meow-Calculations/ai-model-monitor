@@ -263,19 +263,19 @@ func SaveConfig(cfg *AppConfig) error {
 
 	// Upsert config values
 	kv := map[string]string{
-		"title":                     cfg.Title,
-		"timeout_seconds":           fmt.Sprintf("%g", cfg.TimeoutSeconds),
-		"slow_threshold_ms":         fmt.Sprintf("%d", cfg.SlowThresholdMs),
-		"concurrency":               fmt.Sprintf("%d", cfg.Concurrency),
-		"provider_concurrency":      fmt.Sprintf("%d", cfg.ProviderConcurrency),
-		"probe_prompt":              cfg.ProbePrompt,
-		"probe_system_prompt":       cfg.ProbeSystemPrompt,
-		"history_size":              fmt.Sprintf("%d", cfg.HistorySize),
-		"stats_window_days":         fmt.Sprintf("%d", cfg.StatsWindowDays),
-		"show_curve_chart":          fmt.Sprintf("%v", cfg.ShowCurveChart),
-		"show_error_detail":         fmt.Sprintf("%v", cfg.ShowErrorDetail),
+		"title":                       cfg.Title,
+		"timeout_seconds":             fmt.Sprintf("%g", cfg.TimeoutSeconds),
+		"slow_threshold_ms":           fmt.Sprintf("%d", cfg.SlowThresholdMs),
+		"concurrency":                 fmt.Sprintf("%d", cfg.Concurrency),
+		"provider_concurrency":        fmt.Sprintf("%d", cfg.ProviderConcurrency),
+		"probe_prompt":                cfg.ProbePrompt,
+		"probe_system_prompt":         cfg.ProbeSystemPrompt,
+		"history_size":                fmt.Sprintf("%d", cfg.HistorySize),
+		"stats_window_days":           fmt.Sprintf("%d", cfg.StatsWindowDays),
+		"show_curve_chart":            fmt.Sprintf("%v", cfg.ShowCurveChart),
+		"show_error_detail":           fmt.Sprintf("%v", cfg.ShowErrorDetail),
 		"auto_check_interval_seconds": fmt.Sprintf("%d", cfg.AutoCheckInterval),
-		"port":                      fmt.Sprintf("%d", cfg.Port),
+		"port":                        fmt.Sprintf("%d", cfg.Port),
 	}
 	for k, v := range kv {
 		_, err := tx.Exec("INSERT OR REPLACE INTO config(key, value) VALUES(?, ?)", k, v)
@@ -319,7 +319,17 @@ func AddProvider(p Provider) error {
 		return err
 	}
 
-	appConfig.Providers = append(appConfig.Providers, p)
+	replaced := false
+	for i, existing := range appConfig.Providers {
+		if existing.ID == p.ID {
+			appConfig.Providers[i] = p
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		appConfig.Providers = append(appConfig.Providers, p)
+	}
 	return nil
 }
 
@@ -409,20 +419,20 @@ func MigrateYAMLToDB(yamlPath string) error {
 		Icon        string   `yaml:"icon"`
 	}
 	type yamlConfig struct {
-		Title               string        `yaml:"title"`
+		Title               string         `yaml:"title"`
 		Providers           []yamlProvider `yaml:"providers"`
-		TimeoutSeconds      float64       `yaml:"timeout_seconds"`
-		SlowThresholdMs     int           `yaml:"slow_threshold_ms"`
-		Concurrency         int           `yaml:"concurrency"`
-		ProviderConcurrency int           `yaml:"provider_concurrency"`
-		ProbePrompt         string        `yaml:"probe_prompt"`
-		ProbeSystemPrompt   string        `yaml:"probe_system_prompt"`
-		HistorySize         int           `yaml:"history_size"`
-		StatsWindowDays     int           `yaml:"stats_window_days"`
-		ShowCurveChart      bool          `yaml:"show_curve_chart"`
-		ShowErrorDetail     bool          `yaml:"show_error_detail"`
-		AutoCheckInterval   int           `yaml:"auto_check_interval_seconds"`
-		Port                int           `yaml:"port"`
+		TimeoutSeconds      float64        `yaml:"timeout_seconds"`
+		SlowThresholdMs     int            `yaml:"slow_threshold_ms"`
+		Concurrency         int            `yaml:"concurrency"`
+		ProviderConcurrency int            `yaml:"provider_concurrency"`
+		ProbePrompt         string         `yaml:"probe_prompt"`
+		ProbeSystemPrompt   string         `yaml:"probe_system_prompt"`
+		HistorySize         int            `yaml:"history_size"`
+		StatsWindowDays     int            `yaml:"stats_window_days"`
+		ShowCurveChart      bool           `yaml:"show_curve_chart"`
+		ShowErrorDetail     bool           `yaml:"show_error_detail"`
+		AutoCheckInterval   int            `yaml:"auto_check_interval_seconds"`
+		Port                int            `yaml:"port"`
 	}
 
 	var yc yamlConfig
