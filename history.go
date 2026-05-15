@@ -80,7 +80,7 @@ func LoadHistoryRecords(providerID, model string, limit int) []HistoryRecord {
 func LoadAllHistory() (map[string][]HistoryRecord, error) {
 	rows, err := db.Query("SELECT provider_id, model, status, latency_ms, checked_at FROM history ORDER BY checked_at ASC")
 	if err != nil {
-		return make(map[string][]HistoryRecord), nil
+		return nil, fmt.Errorf("query all history: %w", err)
 	}
 	defer rows.Close()
 
@@ -89,7 +89,7 @@ func LoadAllHistory() (map[string][]HistoryRecord, error) {
 		var providerID, model, status, checkedAt string
 		var latencyMs int
 		if err := rows.Scan(&providerID, &model, &status, &latencyMs, &checkedAt); err != nil {
-			continue
+			return nil, fmt.Errorf("scan history: %w", err)
 		}
 		key := fmt.Sprintf("%s::%s", providerID, model)
 		result[key] = append(result[key], HistoryRecord{
@@ -97,6 +97,9 @@ func LoadAllHistory() (map[string][]HistoryRecord, error) {
 			LatencyMs: latencyMs,
 			CheckedAt: checkedAt,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate history: %w", err)
 	}
 	return result, nil
 }
