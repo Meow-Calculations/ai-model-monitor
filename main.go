@@ -43,12 +43,10 @@ func main() {
 	}
 	MigrateYAMLToDB(yamlPath)
 
-	// Load config from SQLite
 	cfg, err := LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	SaveConfig(cfg)
 
 	// Load latest report from history so frontend never shows "no data" on startup
 	if len(cfg.Providers) > 0 {
