@@ -93,7 +93,19 @@ func LoadHistoryRecords(providerID, model string, limit int) []HistoryRecord {
 }
 
 func LoadAllHistory() (map[string][]HistoryRecord, error) {
-	rows, err := db.Query("SELECT provider_id, model, status, latency_ms, checked_at FROM history ORDER BY checked_at ASC")
+	return LoadAllHistorySince("")
+}
+
+func LoadAllHistorySince(since string) (map[string][]HistoryRecord, error) {
+	query := "SELECT provider_id, model, status, latency_ms, checked_at FROM history"
+	var args []interface{}
+	if since != "" {
+		query += " WHERE checked_at >= ?"
+		args = append(args, since)
+	}
+	query += " ORDER BY checked_at ASC"
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query all history: %w", err)
 	}

@@ -189,6 +189,7 @@ func InitDB(dataDir string) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_history_key ON history(provider_id, model);
 	CREATE INDEX IF NOT EXISTS idx_history_checked ON history(checked_at);
+	CREATE INDEX IF NOT EXISTS idx_history_lookup ON history(provider_id, model, checked_at);
 	CREATE TABLE IF NOT EXISTS sessions (
 		token_hash TEXT PRIMARY KEY,
 		expires_at  TEXT NOT NULL

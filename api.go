@@ -433,7 +433,7 @@ func buildReport(results []ProbeResult, cfg *AppConfig, startTime time.Time) *Da
 	grouped := make(map[string]*ProviderStatus)
 	var providerOrder []string
 
-	allHistory, err := LoadAllHistory()
+	allHistory, err := LoadAllHistorySince(startTime.AddDate(0, 0, -cfg.StatsWindowDays).Format("2006-01-02 15:04:05"))
 	if err != nil {
 		allHistory = make(map[string][]HistoryRecord)
 	}
