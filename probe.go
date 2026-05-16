@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -110,6 +111,16 @@ func getProbeHandler(providerType string) probeAPIHandler {
 	}
 }
 
+func safeParseResponse(body []byte, parseFn func([]byte) string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("warn: probe response parse panic recovered: %v", r)
+			result = ""
+		}
+	}()
+	return parseFn(body)
+}
+
 func probeModel(provider Provider, model string, cfg *AppConfig) ProbeResult {
 	start := time.Now()
 	result := ProbeResult{
@@ -192,7 +203,7 @@ func probeModel(provider Provider, model string, cfg *AppConfig) ProbeResult {
 			return result
 		}
 
-		completionText := handler.parseResponse(respBody)
+		completionText := safeParseResponse(respBody, handler.parseResponse)
 
 		result.ResponseText = completionText
 		if len(completionText) > 80 {
