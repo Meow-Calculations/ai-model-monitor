@@ -4,8 +4,10 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +16,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
 var (
 	isProbing      atomic.Bool
 	latestReport   *DashboardReport
@@ -21,7 +25,7 @@ var (
 )
 
 func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
-	adminHandler := adminAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	adminHandler := maxBodySizeMiddleware(adminAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/admin/config", "/api/config":
 			handleConfig(w, r)
@@ -36,11 +40,11 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 		default:
 			http.NotFound(w, r)
 		}
-	}), adminToken)
+	}), adminToken))
 
 	mux.HandleFunc("/api/setup-status", handleSetupStatus)
-	mux.HandleFunc("/api/setup", handleSetup)
-	mux.HandleFunc("/api/login", handleLogin)
+	mux.HandleFunc("/api/setup", maxBodySizeMiddleware(http.HandlerFunc(handleSetup)).ServeHTTP)
+	mux.HandleFunc("/api/login", maxBodySizeMiddleware(http.HandlerFunc(handleLogin)).ServeHTTP)
 	mux.HandleFunc("/api/logout", handleLogout)
 
 	adminPaths := []string{
@@ -650,4 +654,35 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+const maxRequestBodyBytes = 1_048_576
+
+func maxBodySizeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func requireJSONContentType(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut {
+			ct := r.Header.Get("Content-Type")
+			if ct == "" || (!strings.HasPrefix(ct, "application/json") && !strings.HasPrefix(ct, "text/plain")) {
+				if strings.HasPrefix(r.URL.Path, "/api/") {
+					r.Body = io.NopCloser(strings.NewReader("{}"))
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sanitizeID(id string) string {
+	return strings.TrimSpace(validIDPattern.ReplaceAllString(id, ""))
 }
