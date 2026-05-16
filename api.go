@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -410,11 +411,13 @@ func runProbe() *DashboardReport {
 			results = append(results, result)
 			resultsMu.Unlock()
 
-			AppendHistoryRecord(j.provider.ID, j.model, HistoryRecord{
+			if err := AppendHistoryRecord(j.provider.ID, j.model, HistoryRecord{
 				Status:    result.Status,
 				LatencyMs: result.LatencyMs,
 				CheckedAt: result.CheckedAt,
-			}, cfg.HistorySize)
+			}, cfg.HistorySize); err != nil {
+				log.Printf("warn: append history for %s/%s: %v", j.provider.ID, j.model, err)
+			}
 		}(job)
 	}
 	wg.Wait()

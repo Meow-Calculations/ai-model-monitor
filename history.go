@@ -9,20 +9,24 @@ import (
 	"time"
 )
 
-func AppendHistoryRecord(providerID, model string, record HistoryRecord, maxSize int) {
-	// Insert the new record
-	_, err := db.Exec(
+func AppendHistoryRecord(providerID, model string, record HistoryRecord, maxSize int) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
 		"INSERT OR REPLACE INTO history(provider_id, model, status, latency_ms, checked_at) VALUES(?, ?, ?, ?, ?)",
 		providerID, model, record.Status, record.LatencyMs, record.CheckedAt,
 	)
 	if err != nil {
-		return
+		return fmt.Errorf("insert history: %w", err)
 	}
 
-	// Prune old records: keep only up to maxSize*16 per key
 	maxStore := maxSize * 16
 	if maxStore > 0 {
-		db.Exec(`DELETE FROM history
+		_, err = tx.Exec(`DELETE FROM history
 			WHERE provider_id = ? AND model = ?
 			AND id NOT IN (
 				SELECT id FROM history
@@ -30,13 +34,20 @@ func AppendHistoryRecord(providerID, model string, record HistoryRecord, maxSize
 				ORDER BY checked_at DESC
 				LIMIT ?
 			)`, providerID, model, providerID, model, maxStore)
+		if err != nil {
+			return fmt.Errorf("prune history: %w", err)
+		}
 	}
 
-	// Prune records outside the stats window
 	cfg := GetConfig()
 	windowStart := time.Now().AddDate(0, 0, -cfg.StatsWindowDays).Format("2006-01-02 15:04:05")
-	db.Exec(`DELETE FROM history WHERE provider_id = ? AND model = ? AND checked_at < ?`,
+	_, err = tx.Exec(`DELETE FROM history WHERE provider_id = ? AND model = ? AND checked_at < ?`,
 		providerID, model, windowStart)
+	if err != nil {
+		return fmt.Errorf("prune window: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 func LoadHistoryRecords(providerID, model string, limit int) []HistoryRecord {
