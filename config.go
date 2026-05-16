@@ -7,10 +7,46 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+const (
+	sqlMaxRetries     = 3
+	sqlRetryBaseDelay = 100 * time.Millisecond
+)
+
+func isLockedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked") ||
+		strings.Contains(msg, "BUSY")
+}
+
+func withRetry(desc string, fn func() error) error {
+	var lastErr error
+	for attempt := 0; attempt <= sqlMaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := sqlRetryBaseDelay * (1 << (attempt - 1))
+			time.Sleep(delay)
+		}
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		if !isLockedError(err) {
+			return err
+		}
+		lastErr = err
+	}
+	return fmt.Errorf("%s failed after %d retries: %w", desc, sqlMaxRetries, lastErr)
+}
 
 const maskedAPIKey = "********"
 
@@ -283,7 +319,6 @@ func SaveConfig(cfg *AppConfig) error {
 	defer configMu.Unlock()
 	NormalizeConfig(cfg)
 
-	// Preserve existing API keys when masked values are provided
 	if appConfig != nil {
 		for i, inProvider := range cfg.Providers {
 			if isMaskedAPIKey(inProvider.APIKey) {
@@ -297,36 +332,37 @@ func SaveConfig(cfg *AppConfig) error {
 		}
 	}
 
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Upsert config values
-	kv := map[string]string{
-		"title":                       cfg.Title,
-		"timeout_seconds":             fmt.Sprintf("%g", cfg.TimeoutSeconds),
-		"slow_threshold_ms":           fmt.Sprintf("%d", cfg.SlowThresholdMs),
-		"concurrency":                 fmt.Sprintf("%d", cfg.Concurrency),
-		"provider_concurrency":        fmt.Sprintf("%d", cfg.ProviderConcurrency),
-		"probe_prompt":                cfg.ProbePrompt,
-		"probe_system_prompt":         cfg.ProbeSystemPrompt,
-		"history_size":                fmt.Sprintf("%d", cfg.HistorySize),
-		"stats_window_days":           fmt.Sprintf("%d", cfg.StatsWindowDays),
-		"show_curve_chart":            fmt.Sprintf("%v", cfg.ShowCurveChart),
-		"show_error_detail":           fmt.Sprintf("%v", cfg.ShowErrorDetail),
-		"auto_check_interval_seconds": fmt.Sprintf("%d", cfg.AutoCheckInterval),
-		"port":                        fmt.Sprintf("%d", cfg.Port),
-	}
-	for k, v := range kv {
-		_, err := tx.Exec("INSERT OR REPLACE INTO config(key, value) VALUES(?, ?)", k, v)
+	err := withRetry("SaveConfig", func() error {
+		tx, err := db.Begin()
 		if err != nil {
-			return fmt.Errorf("upsert config %s: %w", k, err)
+			return fmt.Errorf("begin tx: %w", err)
 		}
-	}
+		defer tx.Rollback()
 
-	if err := tx.Commit(); err != nil {
+		kv := map[string]string{
+			"title":                       cfg.Title,
+			"timeout_seconds":             fmt.Sprintf("%g", cfg.TimeoutSeconds),
+			"slow_threshold_ms":           fmt.Sprintf("%d", cfg.SlowThresholdMs),
+			"concurrency":                 fmt.Sprintf("%d", cfg.Concurrency),
+			"provider_concurrency":        fmt.Sprintf("%d", cfg.ProviderConcurrency),
+			"probe_prompt":                cfg.ProbePrompt,
+			"probe_system_prompt":         cfg.ProbeSystemPrompt,
+			"history_size":                fmt.Sprintf("%d", cfg.HistorySize),
+			"stats_window_days":           fmt.Sprintf("%d", cfg.StatsWindowDays),
+			"show_curve_chart":            fmt.Sprintf("%v", cfg.ShowCurveChart),
+			"show_error_detail":           fmt.Sprintf("%v", cfg.ShowErrorDetail),
+			"auto_check_interval_seconds": fmt.Sprintf("%d", cfg.AutoCheckInterval),
+			"port":                        fmt.Sprintf("%d", cfg.Port),
+		}
+		for k, v := range kv {
+			_, err := tx.Exec("INSERT OR REPLACE INTO config(key, value) VALUES(?, ?)", k, v)
+			if err != nil {
+				return fmt.Errorf("upsert config %s: %w", k, err)
+			}
+		}
+		return tx.Commit()
+	})
+	if err != nil {
 		return err
 	}
 	appConfig = cfg
@@ -357,10 +393,13 @@ func AddProvider(p Provider) error {
 	if err != nil {
 		return fmt.Errorf("encrypt api key: %w", err)
 	}
-	_, err = db.Exec(
-		"INSERT OR REPLACE INTO providers(id, name, type, api_endpoint, api_key, models, icon) VALUES(?, ?, ?, ?, ?, ?, ?)",
-		p.ID, p.Name, p.Type, p.APIEndpoint, encryptedKey, string(modelsJSON), p.Icon,
-	)
+	err = withRetry("AddProvider", func() error {
+		_, err := db.Exec(
+			"INSERT OR REPLACE INTO providers(id, name, type, api_endpoint, api_key, models, icon) VALUES(?, ?, ?, ?, ?, ?, ?)",
+			p.ID, p.Name, p.Type, p.APIEndpoint, encryptedKey, string(modelsJSON), p.Icon,
+		)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -386,7 +425,10 @@ func RemoveProvider(id string) error {
 	if appConfig == nil {
 		appConfig = DefaultConfig()
 	}
-	_, err := db.Exec("DELETE FROM providers WHERE id = ?", id)
+	err := withRetry("RemoveProvider", func() error {
+		_, err := db.Exec("DELETE FROM providers WHERE id = ?", id)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -422,10 +464,13 @@ func UpdateProvider(id string, updated Provider) error {
 	if err != nil {
 		return fmt.Errorf("encrypt api key: %w", err)
 	}
-	_, err = db.Exec(
-		"UPDATE providers SET name=?, type=?, api_endpoint=?, api_key=?, models=?, icon=? WHERE id=?",
-		updated.Name, updated.Type, updated.APIEndpoint, encryptedKey, string(modelsJSON), updated.Icon, id,
-	)
+	err = withRetry("UpdateProvider", func() error {
+		_, err := db.Exec(
+			"UPDATE providers SET name=?, type=?, api_endpoint=?, api_key=?, models=?, icon=? WHERE id=?",
+			updated.Name, updated.Type, updated.APIEndpoint, encryptedKey, string(modelsJSON), updated.Icon, id,
+		)
+		return err
+	})
 	if err != nil {
 		return err
 	}
