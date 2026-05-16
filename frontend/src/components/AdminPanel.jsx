@@ -201,10 +201,6 @@ export default function AdminPanel({ onLogout }) {
               </button>
             </div>
           </div>
-          <div style={{display:'flex',gap:'6px',padding:'8px 24px',borderTop:'1px solid var(--border)'}}>
-            <a href={getExportDownloadURL('csv')} className="btn-soft" style={{fontSize:'12px'}} download>导出 CSV</a>
-            <a href={getExportDownloadURL('json')} className="btn-soft" style={{fontSize:'12px'}} download>导出 JSON</a>
-          </div>
         </div>
       </div>
 
