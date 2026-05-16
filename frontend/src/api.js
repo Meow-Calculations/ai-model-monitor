@@ -131,6 +131,10 @@ export function getAlertEvents() {
   return adminRequest('/alerts/events')
 }
 
+export function getExportDownloadURL(format) {
+  return `${adminBase}/export/${format}`
+}
+
 // CDN icons with fallback to inline SVG
 const PROVIDER_ICONS = {
   openai: 'https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/openai.svg',

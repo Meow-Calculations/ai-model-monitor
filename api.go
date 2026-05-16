@@ -109,6 +109,10 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 			handleAlertRules(w, r)
 		case "/api/admin/alerts/events", "/api/alerts/events":
 			handleAlertEvents(w, r)
+		case "/api/admin/export/csv":
+			handleExportCSV(w, r)
+		case "/api/admin/export/json":
+			handleExportJSON(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -127,6 +131,8 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 		"/api/admin/history",
 		"/api/admin/alerts/rules",
 		"/api/admin/alerts/events",
+		"/api/admin/export/csv",
+		"/api/admin/export/json",
 		"/api/config",
 		"/api/providers",
 		"/api/probe",
@@ -463,6 +469,44 @@ func handleAlertEvents(w http.ResponseWriter, r *http.Request) {
 		events = []AlertEvent{}
 	}
 	json.NewEncoder(w).Encode(events)
+}
+
+func handleExportCSV(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=history.csv")
+
+	rows, err := db.Query("SELECT provider_id, model, status, latency_ms, checked_at FROM history ORDER BY checked_at DESC LIMIT 10000")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	w.Write([]byte("provider_id,model,status,latency_ms,checked_at\n"))
+	for rows.Next() {
+		var providerID, model, status, checkedAt string
+		var latencyMs int
+		if err := rows.Scan(&providerID, &model, &status, &latencyMs, &checkedAt); err != nil {
+			continue
+		}
+		line := fmt.Sprintf("%s,%s,%s,%d,%s\n", providerID, model, status, latencyMs, checkedAt)
+		w.Write([]byte(line))
+	}
+}
+
+func handleExportJSON(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=history.json")
+
+	latestReportMu.RLock()
+	report := latestReport
+	latestReportMu.RUnlock()
+
+	if report != nil {
+		json.NewEncoder(w).Encode(report)
+	} else {
+		json.NewEncoder(w).Encode(map[string]string{"message": "no data available"})
+	}
 }
 
 func buildReportFromHistory(cfg *AppConfig) *DashboardReport {

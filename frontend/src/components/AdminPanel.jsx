@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import * as api from '../api'
+import { getExportDownloadURL } from '../api'
 import {
   getStoredThemeMode,
   getStoredTimeRange,
@@ -10,6 +11,7 @@ import {
 import Dashboard from './Dashboard'
 
 const ConfigPanel = lazy(() => import('./ConfigPanel'))
+const AlertPanel = lazy(() => import('./AlertPanel'))
 
 export default function AdminPanel({ onLogout }) {
   const [tab, setTab] = useState('dashboard')
@@ -154,6 +156,19 @@ export default function AdminPanel({ onLogout }) {
                 </svg>
                 配置管理
               </button>
+              <button
+                className={`panel-tab ${tab === 'alert' ? 'active' : ''}`}
+                onClick={() => setTab('alert')}
+                role="tab"
+                aria-selected={tab === 'alert'}
+                aria-controls="admin-tab-alert"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                告警管理
+              </button>
             </div>
             <div className="panel-actions">
               <button
@@ -185,6 +200,10 @@ export default function AdminPanel({ onLogout }) {
                 退出
               </button>
             </div>
+          </div>
+          <div style={{display:'flex',gap:'6px',padding:'8px 24px',borderTop:'1px solid var(--border)'}}>
+            <a href={getExportDownloadURL('csv')} className="btn-soft" style={{fontSize:'12px'}} download>导出 CSV</a>
+            <a href={getExportDownloadURL('json')} className="btn-soft" style={{fontSize:'12px'}} download>导出 JSON</a>
           </div>
         </div>
       </div>
@@ -222,6 +241,15 @@ export default function AdminPanel({ onLogout }) {
             onThemeModeChange={(mode) => { setStoredThemeMode(mode); window.dispatchEvent(new CustomEvent('themechange')) }}
             onThemeTimeRangeChange={(range) => { setStoredTimeRange(range); window.dispatchEvent(new CustomEvent('themechange')) }}
           />
+          </Suspense>
+        </div>
+        <div
+          id="admin-tab-alert"
+          role="tabpanel"
+          style={{ display: tab === 'alert' ? 'block' : 'none' }}
+        >
+          <Suspense fallback={<div className="panel-content" style={{textAlign:'center',padding:'48px',color:'var(--text-muted)'}}>加载中...</div>}>
+            <AlertPanel />
           </Suspense>
         </div>
       </main>
