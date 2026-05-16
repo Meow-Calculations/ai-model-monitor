@@ -628,3 +628,26 @@ func corsMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Content-Security-Policy", strings.Join([]string{
+				"default-src 'self'",
+				"script-src 'self'",
+				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+				"font-src 'self' https://fonts.gstatic.com",
+				"img-src 'self' data: https://cdn.jsdelivr.net",
+				"connect-src 'self'",
+				"frame-ancestors 'none'",
+				"form-action 'self'",
+			}, "; "))
+		}
+		next.ServeHTTP(w, r)
+	})
+}

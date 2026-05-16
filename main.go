@@ -67,13 +67,15 @@ func main() {
 	mux := http.NewServeMux()
 	registerAPIRoutes(mux, authToken)
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			mux.ServeHTTP(w, r)
 			return
 		}
 		serveStatic(w, r)
 	})
+
+	handler = securityHeadersMiddleware(handler)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("AI Model Monitor starting on http://localhost%s", addr)
