@@ -4,6 +4,7 @@ import "testing"
 
 func setupConfigTestDB(t *testing.T) {
 	t.Helper()
+	ResetRateLimiter()
 	if db != nil {
 		CloseDB()
 	}
