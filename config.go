@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -199,16 +200,24 @@ func LoadConfig() (*AppConfig, error) {
 		cfg.Title = v
 	}
 	if v, ok := kv["timeout_seconds"]; ok {
-		fmt.Sscanf(v, "%f", &cfg.TimeoutSeconds)
+		if val, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.TimeoutSeconds = val
+		}
 	}
 	if v, ok := kv["slow_threshold_ms"]; ok {
-		fmt.Sscanf(v, "%d", &cfg.SlowThresholdMs)
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.SlowThresholdMs = val
+		}
 	}
 	if v, ok := kv["concurrency"]; ok {
-		fmt.Sscanf(v, "%d", &cfg.Concurrency)
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.Concurrency = val
+		}
 	}
 	if v, ok := kv["provider_concurrency"]; ok {
-		fmt.Sscanf(v, "%d", &cfg.ProviderConcurrency)
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.ProviderConcurrency = val
+		}
 	}
 	if v, ok := kv["probe_prompt"]; ok {
 		cfg.ProbePrompt = v
@@ -217,10 +226,14 @@ func LoadConfig() (*AppConfig, error) {
 		cfg.ProbeSystemPrompt = v
 	}
 	if v, ok := kv["history_size"]; ok {
-		fmt.Sscanf(v, "%d", &cfg.HistorySize)
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.HistorySize = val
+		}
 	}
 	if v, ok := kv["stats_window_days"]; ok {
-		fmt.Sscanf(v, "%d", &cfg.StatsWindowDays)
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.StatsWindowDays = val
+		}
 	}
 	if v, ok := kv["show_curve_chart"]; ok {
 		cfg.ShowCurveChart = v == "true"
@@ -229,10 +242,14 @@ func LoadConfig() (*AppConfig, error) {
 		cfg.ShowErrorDetail = v == "true"
 	}
 	if v, ok := kv["auto_check_interval_seconds"]; ok {
-		fmt.Sscanf(v, "%d", &cfg.AutoCheckInterval)
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.AutoCheckInterval = val
+		}
 	}
 	if v, ok := kv["port"]; ok {
-		fmt.Sscanf(v, "%d", &cfg.Port)
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.Port = val
+		}
 	}
 
 	// Load providers
