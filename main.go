@@ -182,6 +182,7 @@ func autoCheckLoop(intervalSeconds int) {
 		latestReport = report
 		latestReportMu.Unlock()
 		broadcastReport(report)
+		evaluateAlertRules(report)
 
 		isProbing.Store(false)
 	}

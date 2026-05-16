@@ -202,6 +202,12 @@ func InitDB(dataDir string) error {
 
 	ensureEncryptionKeyExists()
 
+	firingAlerts = make(map[string]int)
+
+	if err := initAlertTables(); err != nil {
+		return fmt.Errorf("init alert tables: %w", err)
+	}
+
 	return nil
 }
 

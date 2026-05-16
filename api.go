@@ -105,6 +105,10 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 			handleStatus(w, r)
 		case "/api/admin/history":
 			handleHistory(w, r)
+		case "/api/admin/alerts/rules", "/api/alerts/rules":
+			handleAlertRules(w, r)
+		case "/api/admin/alerts/events", "/api/alerts/events":
+			handleAlertEvents(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -121,9 +125,13 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 		"/api/admin/probe",
 		"/api/admin/status",
 		"/api/admin/history",
+		"/api/admin/alerts/rules",
+		"/api/admin/alerts/events",
 		"/api/config",
 		"/api/providers",
 		"/api/probe",
+		"/api/alerts/rules",
+		"/api/alerts/events",
 	}
 	for _, path := range adminPaths {
 		mux.Handle(path, adminHandler)
@@ -340,6 +348,7 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 	latestReportMu.Unlock()
 
 	broadcastReport(report)
+	go evaluateAlertRules(report)
 
 	json.NewEncoder(w).Encode(report)
 }
@@ -397,6 +406,63 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(h)
+}
+
+func handleAlertRules(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		json.NewEncoder(w).Encode(GetAlertRules())
+
+	case http.MethodPost:
+		var rule AlertRule
+		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if rule.Name == "" || rule.MetricType == "" || rule.Condition == "" {
+			http.Error(w, "name, metric_type, condition are required", http.StatusBadRequest)
+			return
+		}
+		if err := SaveAlertRule(rule); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if err := DeleteAlertRule(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleAlertEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	events, err := GetAlertEvents(50)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if events == nil {
+		events = []AlertEvent{}
+	}
+	json.NewEncoder(w).Encode(events)
 }
 
 func buildReportFromHistory(cfg *AppConfig) *DashboardReport {

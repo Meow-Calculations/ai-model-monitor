@@ -101,3 +101,32 @@ type AppConfig struct {
 	AutoCheckInterval   int        `json:"auto_check_interval_seconds" yaml:"auto_check_interval_seconds"`
 	Port                int        `json:"port" yaml:"port"`
 }
+
+type AlertRule struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	ProviderID     string   `json:"provider_id,omitempty"`
+	ModelPattern   string   `json:"model_pattern,omitempty"`
+	MetricType     string   `json:"metric_type"`
+	Condition      string   `json:"condition"`
+	Threshold      float64  `json:"threshold"`
+	DurationMin    int      `json:"duration_min"`
+	NotifyChannels []string `json:"notify_channels"`
+	WebhookURL     string   `json:"webhook_url,omitempty"`
+	Enabled        bool     `json:"enabled"`
+}
+
+type AlertEvent struct {
+	ID           int     `json:"id"`
+	RuleID       string  `json:"rule_id"`
+	RuleName     string  `json:"rule_name"`
+	ProviderID   string  `json:"provider_id"`
+	Model        string  `json:"model"`
+	MetricType   string  `json:"metric_type"`
+	ActualValue  float64 `json:"actual_value"`
+	Threshold    float64 `json:"threshold"`
+	Status       string  `json:"status"`
+	TriggeredAt  string  `json:"triggered_at"`
+	ResolvedAt   string  `json:"resolved_at,omitempty"`
+	Notified     bool    `json:"notified"`
+}
