@@ -162,6 +162,8 @@ func InitDB(dataDir string) error {
 		return fmt.Errorf("create schema: %w", err)
 	}
 
+	ensureEncryptionKeyExists()
+
 	return nil
 }
 
