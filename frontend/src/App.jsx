@@ -10,7 +10,9 @@ import {
 } from './theme'
 import UserPanel from './components/UserPanel'
 import AdminPanel from './components/AdminPanel'
-import './App.css'
+import './styles/theme.css'
+import './styles/layout.css'
+import './styles/responsive.css'
 
 export default function App() {
   return (
