@@ -460,10 +460,18 @@ func buildReport(results []ProbeResult, cfg *AppConfig, startTime time.Time) *Da
 			Status:         r.Status,
 			StatusLabel:    statusLabel(r.Status),
 			LatencyMs:      r.LatencyMs,
-			AvgLatency24h:  avgLatency24h(records),
-			Availability:   availability(records),
-			WeeklySuccess:  weeklySuccessText(records),
 			ShowCurveChart: cfg.ShowCurveChart,
+		}
+
+		if len(records) > 0 {
+			cs := computeStats(records, cfg.StatsWindowDays)
+			ms.AvgLatency24h = cs.avgLatency24h
+			ms.Availability = cs.availability
+			ms.WeeklySuccess = cs.weeklySuccess
+		} else {
+			ms.AvgLatency24h = "N/A"
+			ms.Availability = "0.00%"
+			ms.WeeklySuccess = "0/0"
 		}
 
 		if cfg.ShowErrorDetail && r.Error != "" {
