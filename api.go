@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -424,6 +425,11 @@ func buildReport(results []ProbeResult, cfg *AppConfig, startTime time.Time) *Da
 	grouped := make(map[string]*ProviderStatus)
 	var providerOrder []string
 
+	allHistory, err := LoadAllHistory()
+	if err != nil {
+		allHistory = make(map[string][]HistoryRecord)
+	}
+
 	for _, r := range results {
 		if _, ok := grouped[r.ProviderID]; !ok {
 			grouped[r.ProviderID] = &ProviderStatus{
@@ -438,8 +444,11 @@ func buildReport(results []ProbeResult, cfg *AppConfig, startTime time.Time) *Da
 		}
 		p := grouped[r.ProviderID]
 
-		// Load history from SQLite
-		records := LoadHistoryRecords(r.ProviderID, r.Model, 0)
+		key := fmt.Sprintf("%s::%s", r.ProviderID, r.Model)
+		records := allHistory[key]
+		if records == nil {
+			records = []HistoryRecord{}
+		}
 
 		ms := ModelStatus{
 			ProviderID:     r.ProviderID,
