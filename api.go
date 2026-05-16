@@ -102,6 +102,14 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, "setup required")
 		return
 	}
+
+	ip := clientIP(r)
+	if err := checkLoginRateLimit(ip); err != nil {
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
 	var req struct {
 		Password string `json:"password"`
 	}
@@ -109,10 +117,15 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !VerifyAdminPassword(req.Password) {
+
+	valid := VerifyAdminPassword(req.Password)
+	recordLoginAttempt(ip, valid)
+
+	if !valid {
 		writeAuthError(w, "invalid password")
 		return
 	}
+
 	issueSession(w)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -314,6 +327,33 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(h)
+}
+
+func buildReportFromHistory(cfg *AppConfig) *DashboardReport {
+	startTime := time.Now()
+
+	var results []ProbeResult
+	for _, p := range cfg.Providers {
+		for _, m := range p.Models {
+			records := LoadHistoryRecords(p.ID, m, 1)
+			if len(records) == 0 {
+				continue
+			}
+			latest := records[len(records)-1]
+			results = append(results, ProbeResult{
+				ProviderID:   p.ID,
+				ProviderName: p.Name,
+				ProviderType: p.Type,
+				ProviderIcon: p.Icon,
+				Model:        m,
+				Status:       latest.Status,
+				LatencyMs:    latest.LatencyMs,
+				CheckedAt:    latest.CheckedAt,
+			})
+		}
+	}
+
+	return buildReport(results, cfg, startTime)
 }
 
 func runProbe() *DashboardReport {

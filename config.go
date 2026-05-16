@@ -247,6 +247,10 @@ func LoadConfig() (*AppConfig, error) {
 			continue
 		}
 		json.Unmarshal([]byte(modelsJSON), &p.Models)
+		decrypted, err := decryptAPIKey(p.APIKey)
+		if err == nil {
+			p.APIKey = decrypted
+		}
 		cfg.Providers = append(cfg.Providers, p)
 	}
 
@@ -259,6 +263,20 @@ func SaveConfig(cfg *AppConfig) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 	NormalizeConfig(cfg)
+
+	// Preserve existing API keys when masked values are provided
+	if appConfig != nil {
+		for i, inProvider := range cfg.Providers {
+			if isMaskedAPIKey(inProvider.APIKey) {
+				for _, existing := range appConfig.Providers {
+					if existing.ID == inProvider.ID {
+						cfg.Providers[i].APIKey = existing.APIKey
+						break
+					}
+				}
+			}
+		}
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -316,9 +334,13 @@ func AddProvider(p Provider) error {
 		return fmt.Errorf("provider id is required")
 	}
 	modelsJSON, _ := json.Marshal(p.Models)
-	_, err := db.Exec(
+	encryptedKey, err := encryptAPIKey(p.APIKey)
+	if err != nil {
+		return fmt.Errorf("encrypt api key: %w", err)
+	}
+	_, err = db.Exec(
 		"INSERT OR REPLACE INTO providers(id, name, type, api_endpoint, api_key, models, icon) VALUES(?, ?, ?, ?, ?, ?, ?)",
-		p.ID, p.Name, p.Type, p.APIEndpoint, p.APIKey, string(modelsJSON), p.Icon,
+		p.ID, p.Name, p.Type, p.APIEndpoint, encryptedKey, string(modelsJSON), p.Icon,
 	)
 	if err != nil {
 		return err
@@ -377,9 +399,13 @@ func UpdateProvider(id string, updated Provider) error {
 		}
 	}
 	modelsJSON, _ := json.Marshal(updated.Models)
-	_, err := db.Exec(
+	encryptedKey, err := encryptAPIKey(updated.APIKey)
+	if err != nil {
+		return fmt.Errorf("encrypt api key: %w", err)
+	}
+	_, err = db.Exec(
 		"UPDATE providers SET name=?, type=?, api_endpoint=?, api_key=?, models=?, icon=? WHERE id=?",
-		updated.Name, updated.Type, updated.APIEndpoint, updated.APIKey, string(modelsJSON), updated.Icon, id,
+		updated.Name, updated.Type, updated.APIEndpoint, encryptedKey, string(modelsJSON), updated.Icon, id,
 	)
 	if err != nil {
 		return err

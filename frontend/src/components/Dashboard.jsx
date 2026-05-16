@@ -83,7 +83,7 @@ function ProviderCard({ provider, historySize }) {
 
       <div className="models-section">
         {provider.results.map((model, idx) => (
-          <ModelRow key={`${model.provider_id}-${model.model}`} model={model} historySize={historySize} />
+          <ModelRow key={`${model.provider_id}-${model.model}-${idx}`} model={model} historySize={historySize} />
         ))}
       </div>
     </article>

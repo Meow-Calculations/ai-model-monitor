@@ -315,7 +315,7 @@ function ProviderItem({ provider, onEdit, onRemove }) {
         <div className="provider-detail">{provider.models?.length || 0} 个模型 · {provider.api_endpoint || '未配置 Endpoint'}</div>
         {provider.models?.length > 0 && (
           <div className="model-chip-row">
-            {provider.models.slice(0, 6).map(model => <span key={model}>{model}</span>)}
+            {provider.models.slice(0, 6).map((model, i) => <span key={`${model}-${i}`}>{model}</span>)}
             {provider.models.length > 6 && <span>+{provider.models.length - 6}</span>}
           </div>
         )}

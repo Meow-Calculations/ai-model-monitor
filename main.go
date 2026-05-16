@@ -50,6 +50,14 @@ func main() {
 	}
 	SaveConfig(cfg)
 
+	// Load latest report from history so frontend never shows "no data" on startup
+	if len(cfg.Providers) > 0 {
+		report := buildReportFromHistory(cfg)
+		latestReportMu.Lock()
+		latestReport = report
+		latestReportMu.Unlock()
+	}
+
 	staticDir = filepath.Join(baseDir, "static")
 	if _, err := os.Stat(staticDir); os.IsNotExist(err) {
 		staticDir = "static"

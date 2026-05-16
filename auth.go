@@ -6,19 +6,132 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"crypto/pbkdf2"
 )
 
 const (
-	adminPasswordKey = "admin_password_hash"
-	passwordHashAlgo = "pbkdf2_sha256"
-	passwordHashIter = 210000
-	sessionTTL       = 7 * 24 * time.Hour
+	adminPasswordKey        = "admin_password_hash"
+	passwordHashAlgo        = "pbkdf2_sha256"
+	passwordHashIter        = 210000
+	sessionTTL              = 7 * 24 * time.Hour
+	loginRateLimitWindow    = 1 * time.Minute
+	loginRateLimitThreshold = 5
+	loginRateLimitBan       = 1 * time.Minute
 )
+
+type ipRateLimit struct {
+	count       int
+	windowStart time.Time
+	bannedUntil time.Time
+}
+
+var (
+	loginAttempts   map[string]*ipRateLimit
+	loginAttemptsMu sync.Mutex
+	rateLimitInit   sync.Once
+)
+
+func initRateLimiter() {
+	rateLimitInit.Do(func() {
+		loginAttempts = make(map[string]*ipRateLimit)
+		go rateLimitCleanup()
+	})
+}
+
+func rateLimitCleanup() {
+	for {
+		time.Sleep(5 * time.Minute)
+		loginAttemptsMu.Lock()
+		now := time.Now()
+		for ip, entry := range loginAttempts {
+			if now.Sub(entry.windowStart) > loginRateLimitWindow*2 && now.After(entry.bannedUntil) {
+				delete(loginAttempts, ip)
+			}
+		}
+		loginAttemptsMu.Unlock()
+	}
+}
+
+func clientIP(r *http.Request) string {
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		parts := strings.SplitN(fwd, ",", 2)
+		if ip := net.ParseIP(strings.TrimSpace(parts[0])); ip != nil {
+			return ip.String()
+		}
+	}
+	if real := r.Header.Get("X-Real-IP"); real != "" {
+		if ip := net.ParseIP(strings.TrimSpace(real)); ip != nil {
+			return ip.String()
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func checkLoginRateLimit(ip string) error {
+	initRateLimiter()
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+
+	entry, exists := loginAttempts[ip]
+	now := time.Now()
+
+	if !exists {
+		entry = &ipRateLimit{}
+		loginAttempts[ip] = entry
+	}
+
+	if now.Before(entry.bannedUntil) {
+		remaining := entry.bannedUntil.Sub(now).Round(time.Second)
+		return fmt.Errorf("登录尝试过于频繁，请在 %v 后重试", remaining)
+	}
+
+	if now.Sub(entry.windowStart) > loginRateLimitWindow {
+		entry.count = 0
+		entry.windowStart = now
+	}
+
+	if entry.count >= loginRateLimitThreshold {
+		entry.bannedUntil = now.Add(loginRateLimitBan)
+		remaining := loginRateLimitBan.Round(time.Second)
+		return fmt.Errorf("登录尝试过于频繁，请在 %v 后重试", remaining)
+	}
+
+	return nil
+}
+
+func recordLoginAttempt(ip string, success bool) {
+	initRateLimiter()
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+
+	entry, exists := loginAttempts[ip]
+	now := time.Now()
+
+	if !exists {
+		entry = &ipRateLimit{windowStart: now}
+		loginAttempts[ip] = entry
+	}
+
+	if now.Sub(entry.windowStart) > loginRateLimitWindow {
+		entry.count = 0
+		entry.windowStart = now
+	}
+
+	if !success {
+		entry.count++
+	}
+}
 
 func IsSetupComplete() bool {
 	var value string

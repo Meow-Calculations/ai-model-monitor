@@ -12,7 +12,95 @@ import (
 
 const maxRetries = 2
 
-func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeResult {
+type probeAPIHandler struct {
+	urlSuffix   string
+	buildBody   func(model string, cfg *AppConfig) map[string]interface{}
+	setHeaders func(req *http.Request, provider Provider)
+	parseResponse func(body []byte) string
+}
+
+func getProbeHandler(providerType string) probeAPIHandler {
+	switch strings.ToLower(providerType) {
+	case "anthropic":
+		return probeAPIHandler{
+			urlSuffix: "/messages",
+			buildBody: func(model string, cfg *AppConfig) map[string]interface{} {
+				return map[string]interface{}{
+					"model":      model,
+					"max_tokens": 16,
+					"system":     cfg.ProbeSystemPrompt,
+					"messages": []map[string]string{
+						{"role": "user", "content": cfg.ProbePrompt},
+					},
+				}
+			},
+			setHeaders: func(req *http.Request, provider Provider) {
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("x-api-key", provider.APIKey)
+				req.Header.Set("anthropic-version", "2023-06-01")
+			},
+			parseResponse: func(body []byte) string {
+				var resp map[string]interface{}
+				if err := json.Unmarshal(body, &resp); err != nil {
+					return ""
+				}
+				content, ok := resp["content"].([]interface{})
+				if !ok || len(content) == 0 {
+					return ""
+				}
+				block, ok := content[0].(map[string]interface{})
+				if !ok {
+					return ""
+				}
+				text, _ := block["text"].(string)
+				return strings.TrimSpace(text)
+			},
+		}
+	default:
+		return probeAPIHandler{
+			urlSuffix: "/chat/completions",
+			buildBody: func(model string, cfg *AppConfig) map[string]interface{} {
+				return map[string]interface{}{
+					"model": model,
+					"messages": []map[string]string{
+						{"role": "system", "content": cfg.ProbeSystemPrompt},
+						{"role": "user", "content": cfg.ProbePrompt},
+					},
+					"max_tokens":  16,
+					"temperature": 0,
+				}
+			},
+			setHeaders: func(req *http.Request, provider Provider) {
+				req.Header.Set("Content-Type", "application/json")
+				if provider.APIKey != "" {
+					req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+				}
+			},
+			parseResponse: func(body []byte) string {
+				var resp map[string]interface{}
+				if err := json.Unmarshal(body, &resp); err != nil {
+					return ""
+				}
+				choices, ok := resp["choices"].([]interface{})
+				if !ok || len(choices) == 0 {
+					return ""
+				}
+				choice, ok := choices[0].(map[string]interface{})
+				if !ok {
+					return ""
+				}
+				msg, ok := choice["message"].(map[string]interface{})
+				if !ok {
+					return ""
+				}
+				content, _ := msg["content"].(string)
+				return strings.TrimSpace(content)
+			},
+		}
+	}
+}
+
+func probeModel(provider Provider, model string, cfg *AppConfig) ProbeResult {
 	start := time.Now()
 	result := ProbeResult{
 		ProviderID:   provider.ID,
@@ -23,19 +111,11 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 		CheckedAt:    start.Format("2006-01-02 15:04:05"),
 	}
 
+	handler := getProbeHandler(provider.Type)
 	endpoint := strings.TrimRight(provider.APIEndpoint, "/")
-	url := endpoint + "/chat/completions"
+	url := endpoint + handler.urlSuffix
 
-	requestBody := map[string]interface{}{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "system", "content": cfg.ProbeSystemPrompt},
-			{"role": "user", "content": cfg.ProbePrompt},
-		},
-		"max_tokens":  16,
-		"temperature": 0,
-	}
-
+	requestBody := handler.buildBody(model, cfg)
 	bodyBytes, err := json.Marshal(requestBody)
 	if err != nil {
 		result.Status = "error"
@@ -47,7 +127,7 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 	var lastErr string
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond) // backoff: 500ms, 1000ms
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 		}
 
 		req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
@@ -58,10 +138,7 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 			return result
 		}
 
-		req.Header.Set("Content-Type", "application/json")
-		if provider.APIKey != "" {
-			req.Header.Set("Authorization", "Bearer "+provider.APIKey)
-		}
+		handler.setHeaders(req, provider)
 
 		client := &http.Client{
 			Timeout: time.Duration(cfg.TimeoutSeconds * float64(time.Second)),
@@ -73,12 +150,10 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 
 		if err != nil {
 			lastErr = err.Error()
-			// Retry on timeout or connection errors
 			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") ||
 				strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "temporary") {
 				continue
 			}
-			// Non-retriable error
 			result.Status = "error"
 			result.Error = shortError(lastErr)
 			return result
@@ -92,12 +167,10 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 		}
 
 		if resp.StatusCode >= 400 {
-			// Retry on 429 (rate limit) and 5xx (server errors)
 			if resp.StatusCode == 429 || resp.StatusCode >= 500 {
 				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 				continue
 			}
-			// Non-retriable client error
 			result.Status = "error"
 			var errResp map[string]interface{}
 			if json.Unmarshal(respBody, &errResp) == nil {
@@ -112,23 +185,7 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 			return result
 		}
 
-		var chatResp map[string]interface{}
-		if err := json.Unmarshal(respBody, &chatResp); err != nil {
-			result.Status = "error"
-			result.Error = shortError(fmt.Sprintf("parse response error: %s", err.Error()))
-			return result
-		}
-
-		var completionText string
-		if choices, ok := chatResp["choices"].([]interface{}); ok && len(choices) > 0 {
-			if choice, ok := choices[0].(map[string]interface{}); ok {
-				if msg, ok := choice["message"].(map[string]interface{}); ok {
-					if content, ok := msg["content"].(string); ok {
-						completionText = strings.TrimSpace(content)
-					}
-				}
-			}
-		}
+		completionText := handler.parseResponse(respBody)
 
 		result.ResponseText = completionText
 		if len(completionText) > 80 {
@@ -143,7 +200,6 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 		return result
 	}
 
-	// All retries exhausted
 	result.Status = "error"
 	if strings.Contains(lastErr, "timeout") || strings.Contains(lastErr, "deadline") {
 		result.Error = fmt.Sprintf("timeout after %gs (retried %d times)", cfg.TimeoutSeconds, maxRetries)
@@ -151,140 +207,4 @@ func probeOpenAICompat(provider Provider, model string, cfg *AppConfig) ProbeRes
 		result.Error = shortError(fmt.Sprintf("%s (retried %d times)", lastErr, maxRetries))
 	}
 	return result
-}
-
-func probeAnthropic(provider Provider, model string, cfg *AppConfig) ProbeResult {
-	start := time.Now()
-	result := ProbeResult{
-		ProviderID:   provider.ID,
-		ProviderName: provider.Name,
-		ProviderType: provider.Type,
-		ProviderIcon: provider.Icon,
-		Model:        model,
-		CheckedAt:    start.Format("2006-01-02 15:04:05"),
-	}
-
-	endpoint := strings.TrimRight(provider.APIEndpoint, "/")
-	url := endpoint + "/messages"
-
-	requestBody := map[string]interface{}{
-		"model":      model,
-		"max_tokens": 16,
-		"system":     cfg.ProbeSystemPrompt,
-		"messages": []map[string]string{
-			{"role": "user", "content": cfg.ProbePrompt},
-		},
-	}
-
-	bodyBytes, err := json.Marshal(requestBody)
-	if err != nil {
-		result.Status = "error"
-		result.LatencyMs = int(time.Since(start).Milliseconds())
-		result.Error = shortError(err.Error())
-		return result
-	}
-
-	var lastErr string
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-		}
-
-		req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
-		if err != nil {
-			result.Status = "error"
-			result.LatencyMs = int(time.Since(start).Milliseconds())
-			result.Error = shortError(err.Error())
-			return result
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("x-api-key", provider.APIKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-
-		client := &http.Client{
-			Timeout: time.Duration(cfg.TimeoutSeconds * float64(time.Second)),
-		}
-
-		resp, err := client.Do(req)
-		latencyMs := int(time.Since(start).Milliseconds())
-		result.LatencyMs = latencyMs
-
-		if err != nil {
-			lastErr = err.Error()
-			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") ||
-				strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "temporary") {
-				continue
-			}
-			result.Status = "error"
-			result.Error = shortError(lastErr)
-			return result
-		}
-
-		respBody, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = err.Error()
-			continue
-		}
-
-		if resp.StatusCode >= 400 {
-			if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-				lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
-				continue
-			}
-			result.Status = "error"
-			var errResp map[string]interface{}
-			if json.Unmarshal(respBody, &errResp) == nil {
-				if e, ok := errResp["error"].(map[string]interface{}); ok {
-					if msg, ok := e["message"].(string); ok {
-						result.Error = shortError(msg)
-						return result
-					}
-				}
-			}
-			result.Error = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, shortError(string(respBody)))
-			return result
-		}
-
-		var msgResp map[string]interface{}
-		if err := json.Unmarshal(respBody, &msgResp); err == nil {
-			if content, ok := msgResp["content"].([]interface{}); ok && len(content) > 0 {
-				if block, ok := content[0].(map[string]interface{}); ok {
-					if text, ok := block["text"].(string); ok {
-						completionText := strings.TrimSpace(text)
-						result.ResponseText = completionText
-						if len(completionText) > 80 {
-							result.ResponseText = completionText[:80]
-						}
-					}
-				}
-			}
-		}
-
-		if latencyMs >= cfg.SlowThresholdMs {
-			result.Status = "slow"
-		} else {
-			result.Status = "ok"
-		}
-		return result
-	}
-
-	// All retries exhausted
-	result.Status = "error"
-	if strings.Contains(lastErr, "timeout") || strings.Contains(lastErr, "deadline") {
-		result.Error = fmt.Sprintf("timeout after %gs (retried %d times)", cfg.TimeoutSeconds, maxRetries)
-	} else {
-		result.Error = shortError(fmt.Sprintf("%s (retried %d times)", lastErr, maxRetries))
-	}
-	return result
-}
-
-func probeModel(provider Provider, model string, cfg *AppConfig) ProbeResult {
-	switch strings.ToLower(provider.Type) {
-	case "anthropic":
-		return probeAnthropic(provider, model, cfg)
-	default:
-		return probeOpenAICompat(provider, model, cfg)
-	}
 }

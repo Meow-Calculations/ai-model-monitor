@@ -11,6 +11,11 @@ dist/
 coverage.out
 coverage.html
 
+# === IDE/编辑器配置 ===
+.idea/
+.joycode/
+.claude/
+
 # === 运行时数据 ===
 data/
 *.db
