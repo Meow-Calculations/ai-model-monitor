@@ -21,13 +21,14 @@ func AppendHistoryRecord(providerID, model string, record HistoryRecord, maxSize
 	// Prune old records: keep only up to maxSize*16 per key
 	maxStore := maxSize * 16
 	if maxStore > 0 {
-		// Delete oldest records beyond maxStore
-		db.Exec(`DELETE FROM history WHERE id IN (
-			SELECT id FROM history
+		db.Exec(`DELETE FROM history
 			WHERE provider_id = ? AND model = ?
-			ORDER BY checked_at DESC
-			LIMIT -1 OFFSET ?
-		)`, providerID, model, maxStore)
+			AND id NOT IN (
+				SELECT id FROM history
+				WHERE provider_id = ? AND model = ?
+				ORDER BY checked_at DESC
+				LIMIT ?
+			)`, providerID, model, providerID, model, maxStore)
 	}
 
 	// Prune records outside the stats window
