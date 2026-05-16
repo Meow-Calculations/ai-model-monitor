@@ -132,7 +132,7 @@ export function getAlertEvents() {
 }
 
 export function getExportDownloadURL(format) {
-  return `${adminBase}/export/${format}`
+  return `${ADMIN_API_BASE}/export/${format}`
 }
 
 // CDN icons with fallback to inline SVG
