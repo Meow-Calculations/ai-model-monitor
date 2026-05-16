@@ -54,6 +54,7 @@ func main() {
 		latestReportMu.Lock()
 		latestReport = report
 		latestReportMu.Unlock()
+		broadcastReport(report)
 	}
 
 	staticDir = filepath.Join(baseDir, "static")
@@ -180,6 +181,7 @@ func autoCheckLoop(intervalSeconds int) {
 		latestReportMu.Lock()
 		latestReport = report
 		latestReportMu.Unlock()
+		broadcastReport(report)
 
 		isProbing.Store(false)
 	}

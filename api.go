@@ -22,7 +22,75 @@ var (
 	isProbing      atomic.Bool
 	latestReport   *DashboardReport
 	latestReportMu sync.RWMutex
+
+	sseClients   map[chan *DashboardReport]struct{}
+	sseClientsMu sync.Mutex
 )
+
+func init() {
+	sseClients = make(map[chan *DashboardReport]struct{})
+}
+
+func broadcastReport(report *DashboardReport) {
+	sseClientsMu.Lock()
+	defer sseClientsMu.Unlock()
+	for ch := range sseClients {
+		select {
+		case ch <- report:
+		default:
+		}
+	}
+}
+
+func handleSSE(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	ch := make(chan *DashboardReport, 4)
+	sseClientsMu.Lock()
+	sseClients[ch] = struct{}{}
+	sseClientsMu.Unlock()
+
+	defer func() {
+		sseClientsMu.Lock()
+		delete(sseClients, ch)
+		sseClientsMu.Unlock()
+	}()
+
+	latestReportMu.RLock()
+	if latestReport != nil {
+		data, _ := json.Marshal(latestReport)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+	latestReportMu.RUnlock()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case report, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
 
 func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 	adminHandler := maxBodySizeMiddleware(adminAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +131,7 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/history", handleHistory)
+	mux.HandleFunc("/api/events", handleSSE)
 }
 
 func handleSetupStatus(w http.ResponseWriter, r *http.Request) {
@@ -269,6 +338,8 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 	latestReportMu.Lock()
 	latestReport = report
 	latestReportMu.Unlock()
+
+	broadcastReport(report)
 
 	json.NewEncoder(w).Encode(report)
 }

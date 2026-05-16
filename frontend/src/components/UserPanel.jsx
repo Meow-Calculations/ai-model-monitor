@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import * as api from '../api'
 import Dashboard from './Dashboard'
 
 export default function UserPanel() {
   const [report, setReport] = useState(null)
   const [error, setError] = useState(null)
+  const esRef = useRef(null)
+  const pollingRef = useRef(null)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -22,8 +24,43 @@ export default function UserPanel() {
 
   useEffect(() => {
     loadStatus()
-    const interval = setInterval(loadStatus, 30_000)
-    return () => clearInterval(interval)
+
+    const eventSourceUrl = `${window.location.origin}/api/events`
+    let es
+
+    try {
+      es = new EventSource(eventSourceUrl)
+      esRef.current = es
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data && data.providers) {
+            setReport(data)
+            setError(null)
+          }
+        } catch (_) {}
+      }
+
+      es.onerror = () => {
+        es.close()
+        esRef.current = null
+        pollingRef.current = setInterval(loadStatus, 30_000)
+      }
+    } catch (_) {
+      pollingRef.current = setInterval(loadStatus, 30_000)
+    }
+
+    return () => {
+      if (esRef.current) {
+        esRef.current.close()
+        esRef.current = null
+      }
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+        pollingRef.current = null
+      }
+    }
   }, [loadStatus])
 
   return (
