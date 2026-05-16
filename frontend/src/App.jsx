@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import * as api from './api'
 import {
@@ -9,10 +9,11 @@ import {
   resolveTheme,
 } from './theme'
 import UserPanel from './components/UserPanel'
-import AdminPanel from './components/AdminPanel'
 import './styles/theme.css'
 import './styles/layout.css'
 import './styles/responsive.css'
+
+const AdminPanel = lazy(() => import('./components/AdminPanel'))
 
 export default function App() {
   return (
@@ -155,6 +156,7 @@ function AppContent() {
             resolvedTheme={resolvedTheme}
             onThemeToggle={() => setThemeMode(resolvedTheme === 'dark' ? 'light' : 'dark')}
           />
+          <Suspense fallback={<div className="panel-content"><div className="empty-state"><div className="empty-title">加载中...</div></div></div>}>
           <Routes>
             <Route path="/" element={<UserPanel />} />
             <Route
@@ -184,6 +186,7 @@ function AppContent() {
             />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
         </>
       )}
     </div>

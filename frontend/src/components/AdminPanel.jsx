@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import * as api from '../api'
 import {
   getStoredThemeMode,
@@ -8,7 +8,8 @@ import {
   resolveTheme,
 } from '../theme'
 import Dashboard from './Dashboard'
-import ConfigPanel from './ConfigPanel'
+
+const ConfigPanel = lazy(() => import('./ConfigPanel'))
 
 export default function AdminPanel({ onLogout }) {
   const [tab, setTab] = useState('dashboard')
@@ -208,6 +209,7 @@ export default function AdminPanel({ onLogout }) {
           role="tabpanel"
           style={{ display: tab === 'config' ? 'block' : 'none' }}
         >
+          <Suspense fallback={<div className="panel-content" style={{textAlign:'center',padding:'48px',color:'var(--text-muted)'}}>配置加载中...</div>}>
           <ConfigPanel
             config={config}
             onSave={handleSaveConfig}
@@ -220,6 +222,7 @@ export default function AdminPanel({ onLogout }) {
             onThemeModeChange={(mode) => { setStoredThemeMode(mode); window.dispatchEvent(new CustomEvent('themechange')) }}
             onThemeTimeRangeChange={(range) => { setStoredTimeRange(range); window.dispatchEvent(new CustomEvent('themechange')) }}
           />
+          </Suspense>
         </div>
       </main>
     </div>
