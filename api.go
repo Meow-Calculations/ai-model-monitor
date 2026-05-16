@@ -42,7 +42,7 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 	mux.HandleFunc("/api/login", handleLogin)
 	mux.HandleFunc("/api/logout", handleLogout)
 
-	for _, path := range []string{
+	adminPaths := []string{
 		"/api/admin/config",
 		"/api/admin/providers",
 		"/api/admin/probe",
@@ -51,7 +51,8 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 		"/api/config",
 		"/api/providers",
 		"/api/probe",
-	} {
+	}
+	for _, path := range adminPaths {
 		mux.Handle(path, adminHandler)
 	}
 
