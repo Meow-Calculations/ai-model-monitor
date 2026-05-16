@@ -25,40 +25,30 @@ export default function UserPanel() {
   useEffect(() => {
     loadStatus()
 
-    const connectSSE = async () => {
-      try {
-        const resp = await fetch(`${window.location.origin}/api/status`, {
-          method: 'HEAD',
-          signal: AbortSignal.timeout(3000),
-        })
-        if (!resp.ok) throw new Error()
+    if (import.meta.env.DEV) {
+      pollingRef.current = setInterval(loadStatus, 30_000)
+    } else {
+      const es = new EventSource('/api/events')
+      esRef.current = es
 
-        const es = new EventSource(`${window.location.origin}/api/events`)
-        esRef.current = es
-
-        es.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-            if (data && data.providers) {
-              setReport(data)
-              setError(null)
-            }
-          } catch (_) {}
-        }
-
-        es.onerror = () => {
-          es.close()
-          esRef.current = null
-          if (!pollingRef.current) {
-            pollingRef.current = setInterval(loadStatus, 30_000)
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data && data.providers) {
+            setReport(data)
+            setError(null)
           }
+        } catch (_) {}
+      }
+
+      es.onerror = () => {
+        es.close()
+        esRef.current = null
+        if (!pollingRef.current) {
+          pollingRef.current = setInterval(loadStatus, 30_000)
         }
-      } catch (_) {
-        pollingRef.current = setInterval(loadStatus, 30_000)
       }
     }
-
-    connectSSE()
 
     return () => {
       if (esRef.current) {
