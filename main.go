@@ -172,21 +172,15 @@ func autoCheckLoop(intervalSeconds int) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		probingMu.Lock()
-		if isProbing {
-			probingMu.Unlock()
+		if !isProbing.CompareAndSwap(false, true) {
 			continue
 		}
-		isProbing = true
-		probingMu.Unlock()
 
 		report := runProbe()
 		latestReportMu.Lock()
 		latestReport = report
 		latestReportMu.Unlock()
 
-		probingMu.Lock()
-		isProbing = false
-		probingMu.Unlock()
+		isProbing.Store(false)
 	}
 }

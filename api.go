@@ -6,14 +6,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 var (
-	probingMu      sync.Mutex
-	isProbing      bool
+	isProbing      atomic.Bool
 	latestReport   *DashboardReport
 	latestReportMu sync.RWMutex
 )
@@ -247,23 +247,15 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	probingMu.Lock()
-	if isProbing {
-		probingMu.Unlock()
+	if !isProbing.CompareAndSwap(false, true) {
 		json.NewEncoder(w).Encode(map[string]string{
 			"status":  "already_probing",
 			"message": "探测正在进行中，请稍后再试",
 		})
 		return
 	}
-	isProbing = true
-	probingMu.Unlock()
 
-	defer func() {
-		probingMu.Lock()
-		isProbing = false
-		probingMu.Unlock()
-	}()
+	defer isProbing.Store(false)
 
 	report := runProbe()
 
