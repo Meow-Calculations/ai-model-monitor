@@ -14,8 +14,10 @@
 - **Provider 管理** — Web UI 动态增删改 Provider 和模型
 - **面板分离** — 用户面板（公开只读）与管理面板（需认证）独立路由，互不干扰
 - **双列瀑布流** — Provider 卡片 CSS Grid 双列布局，不同高度顶部对齐
-- **首次初始化密码** — 首次运行必须在网页设置管理密码后才能使用管理功能
+- **首批初始化密码** — 首次运行必须在网页设置管理密码后才能使用管理功能
 - **管理接口鉴权** — `/api/admin/*` 强制登录态鉴权，兼容环境变量 Token
+- **API Key 加密存储** — 使用 AES-256-GCM 对 API Key 加密后写入 SQLite，密钥由环境变量或管理密码哈希派生
+- **登录速率限制** — 60 秒内连续 5 次登录失败临时锁定 1 分钟，基于 IP 的暴力破解防护
 - **主题切换** — 支持日间、夜间、跟随系统和按时间自动切换，全局导航栏一键切换
 - **毛玻璃主题** — 网格背景 + 辐射渐变 + 毛玻璃效果 + 深浅色双主题
 - **开关控件** — 配置项使用 iOS 风格开关按钮替代传统复选框
@@ -26,7 +28,7 @@
 |------|------|
 | 后端 | Go 1.26+ |
 | 数据库 | SQLite (modernc.org/sqlite，纯 Go 无需 CGO) |
-| 前端 | React 19 + Vite 6 + react-router-dom v6 |
+| 前端 | React 19 + Vite 6 + react-router-dom v7 |
 | 样式 | CSS 自定义属性 + 毛玻璃效果 + 深浅色双主题 |
 
 ## 项目结构
@@ -37,10 +39,11 @@
 ai-model-monitor/
 ├── main.go                      # 入口：HTTP 服务、静态文件托管、自动检测
 ├── api.go                       # REST API 路由、CORS、鉴权与初始化接口
-├── auth.go                      # 管理密码哈希、会话创建与校验
+├── auth.go                      # 管理密码哈希、会话创建与校验、登录速率限制
+├── crypto.go                    # AES-256-GCM API Key 加密解密
 ├── models.go                    # 数据模型定义
 ├── config.go                    # SQLite 配置读写、Provider CRUD、配置校验
-├── probe.go                     # 模型探测逻辑（含重试机制）
+├── probe.go                     # 模型探测逻辑（策略模式，支持 OpenAI 兼容 / Anthropic）
 ├── history.go                   # 历史记录持久化、统计计算
 ├── migrate.go                   # YAML → SQLite 迁移辅助
 ├── config.yaml                  # 默认配置（可选，启动时自动迁移到 SQLite）
@@ -79,7 +82,7 @@ ai-model-monitor/
 ### 方式 1：直接运行
 
 ```bash
-# 如果尚未生成前端资源，请先执行“构建部署”里的前端构建步骤
+# 如果尚未生成前端资源，请先执行"构建部署"里的前端构建步骤
 go build -o ai-model-monitor.exe .
 ./ai-model-monitor.exe
 ```
@@ -103,7 +106,7 @@ npm run dev
 ## 构建部署
 
 ```bash
-# 1. 构建前端（输出到根目录 static/）
+# 1. 构建前端（输出到 static/）
 cd frontend
 npm ci
 npm run build
@@ -115,10 +118,37 @@ go build -o ai-model-monitor.exe .
 # 3. 部署 — 只需以下文件/目录
 #   ai-model-monitor.exe
 #   static/     (npm run build 生成的前端资源)
-#   config.yaml (可选，仅用于首次迁移)
 ```
 
 `static/` 是构建生成目录，不提交到 Git。每次部署前请先执行 `npm run build` 重新生成静态资源。`data/` 是运行时数据库目录，也不提交到 Git。
+
+## API Key 加密存储
+
+API Key 在写入 SQLite 时会使用 **AES-256-GCM** 自动加密，读取时自动解密，内存中始终保持明文可用。
+
+### 加密密钥来源（优先级由高到低）
+
+1. **环境变量 `AMM_ENCRYPTION_KEY`**：64 位十六进制字符串（32 字节），推荐使用
+2. **管理密码哈希**：不设置环境变量时，自动从管理员密码 PBKDF2-SHA256 哈希派生
+3. **无加密（兼容模式）**：既无环境变量也无管理密码时，API Key 以明文存储（仅首次启动过渡期）
+
+### 生成加密密钥
+
+```bash
+# Linux/macOS
+openssl rand -hex 32
+
+# Windows (PowerShell)
+$bytes = [byte[]]::new(32); (New-Object Security.Cryptography.RNGCryptoServiceProvider).GetBytes($bytes); ($bytes | ForEach-Object { $_.ToString("x2") }) -join ''
+```
+
+```bash
+# 使用环境变量启动
+set AMM_ENCRYPTION_KEY=<64位十六进制密钥>
+./ai-model-monitor.exe
+```
+
+> **注意**：已加密的 API Key 无法在更换密钥后解密。如需更换密钥，请先清空 Provider 列表重新配置。
 
 ## API 接口
 
@@ -126,7 +156,7 @@ go build -o ai-model-monitor.exe .
 |------|------|------|
 | GET | `/api/setup-status` | 查询是否需要首次初始化 |
 | POST | `/api/setup` | 首次设置管理密码，成功后写入登录会话 |
-| POST | `/api/login` | 使用管理密码登录 |
+| POST | `/api/login` | 使用管理密码登录（含速率限制：60 秒内 5 次失败锁定 1 分钟） |
 | POST | `/api/logout` | 退出登录并清除会话 |
 | GET | `/api/admin/config` | 获取全局配置（API Key 已脱敏，需鉴权） |
 | PUT | `/api/admin/config` | 更新全局配置（需鉴权） |
@@ -135,8 +165,8 @@ go build -o ai-model-monitor.exe .
 | PUT | `/api/admin/providers?id=xxx` | 更新 Provider（需鉴权） |
 | DELETE | `/api/admin/providers?id=xxx` | 删除 Provider（需鉴权） |
 | POST | `/api/admin/probe` | 手动触发探测（需鉴权） |
-| GET | `/api/status` | 获取最新探测报告 |
-| GET | `/api/history?key=providerID::model` | 查询历史记录 |
+| GET | `/api/status` | 获取最新探测报告（公开） |
+| GET | `/api/history?key=providerID::model` | 查询历史记录（公开） |
 
 兼容说明：旧的 `/api/config`、`/api/providers`、`/api/probe` 路径仍保留为兼容别名，但同样需要完成首次初始化并通过管理鉴权；新接入请使用 `/api/admin/*`。
 
@@ -222,7 +252,8 @@ curl -H "X-API-Key: your-random-token" http://localhost:8080/api/admin/config
 # 前端生产构建，输出到 static/
 npm --prefix frontend run build
 
-# 后端测试
+# 后端测试（含 vet 静态检查）
+go vet ./...
 go test ./...
 
 # 后端编译
@@ -235,21 +266,23 @@ go build -o ai-model-monitor.exe .
 - 未完成首次初始化时，`/api/admin/config` 返回 401。
 - 设置管理密码并登录后可访问配置管理。
 - 首次初始化完成后，正确 Bearer Token 或 `X-API-Key` 可访问 `/api/admin/config`。
-- 用户面板 `/` 无需登录即可查看状态看板，30 秒自动轮询更新。
+- 用户面板 `/` 无需登录即可查看状态看板，启动时自动加载历史数据。
 - 管理面板 `/admin` 未登录时自动重定向到登录页。
 - 配置管理中可新增、编辑、删除 Provider。
 - 编辑 Provider 时保持 `********` 不会覆盖原 API Key，清空字段才删除。
 - 手动探测、历史记录、自动检测仍能正常工作。
+- 登录失败 5 次后触发速率限制，返回 429 并提示等待。
 - 导航栏主题切换按钮可在任意面板一键切换日间/夜间模式。
 - 日间、夜间、跟随系统、按时间主题模式均可切换并持久化到浏览器。
 - 配置管理中的开关按钮（显示延迟曲线、显示错误详情）可正常切换。
+- Provider 配置中 `********` 掩码 key 在保存后不会被损坏，探测仍能正常使用。
 
 ## 数据存储
 
 所有运行时数据存储在 `data/monitor.db`（SQLite），包含以下主要数据：
 
 - **config** — 全局配置键值对，也保存管理员密码哈希
-- **providers** — Provider 信息
+- **providers** — Provider 信息（API Key 以 AES-256-GCM 加密存储）
 - **history** — 探测历史记录
 - **sessions** — 管理登录会话哈希与过期时间
 
