@@ -249,14 +249,24 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var cfg AppConfig
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+
+		currentPort := GetConfig().Port
 		if err := SaveConfig(&cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		json.NewEncoder(w).Encode(maskConfig(GetConfig()))
+
+		resp := map[string]interface{}{
+			"config": maskConfig(GetConfig()),
+		}
+		if cfg.Port != currentPort {
+			resp["restart_required"] = true
+			resp["warning"] = "服务端口已变更，需要重启服务后才能生效"
+		}
+		json.NewEncoder(w).Encode(resp)
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -350,7 +360,9 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 	latestReportMu.Unlock()
 
 	broadcastReport(report)
-	go evaluateAlertRules(report)
+
+	reportCopy := copyReport(report)
+	go evaluateAlertRules(reportCopy)
 
 	json.NewEncoder(w).Encode(report)
 }
@@ -503,6 +515,27 @@ func handleExportJSON(w http.ResponseWriter, r *http.Request) {
 	} else {
 		json.NewEncoder(w).Encode(map[string]string{"message": "no data available"})
 	}
+}
+
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func copyReport(r *DashboardReport) *DashboardReport {
+	if r == nil {
+		return nil
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		return nil
+	}
+	var copy DashboardReport
+	if err := json.Unmarshal(data, &copy); err != nil {
+		return nil
+	}
+	return &copy
 }
 
 func buildReportFromHistory(cfg *AppConfig) *DashboardReport {

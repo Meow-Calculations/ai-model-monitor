@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -12,9 +13,9 @@ import (
 )
 
 var (
-	alertRules   []AlertRule
-	alertRulesMu sync.RWMutex
-	firingAlerts map[string]int
+	alertRules     []AlertRule
+	alertRulesMu   sync.RWMutex
+	firingAlerts   map[string]int
 	firingAlertsMu sync.Mutex
 )
 
@@ -261,6 +262,16 @@ func GetAlertEvents(limit int) ([]AlertEvent, error) {
 	return events, rows.Err()
 }
 
+const (
+	maxNotifyRetries    = 3
+	notifyRetryBaseWait = 2 * time.Second
+)
+
+type notifyResult struct {
+	err     error
+	success bool
+}
+
 func sendAlertNotification(rule AlertRule, providerID, model, metricType string, actualValue float64, status string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -268,43 +279,83 @@ func sendAlertNotification(rule AlertRule, providerID, model, metricType string,
 		}
 	}()
 
-	title := fmt.Sprintf("🔔 [AI Model Monitor] %s", rule.Name)
-	if status == "resolved" {
-		title = fmt.Sprintf("✅ [AI Model Monitor] %s 已恢复", rule.Name)
+	if rule.WebhookURL == "" && len(rule.NotifyChannels) == 0 {
+		return
 	}
 
-	text := fmt.Sprintf("规则: %s\nProvider: %s\n模型: %s\n指标: %s\n当前值: %.2f\n阈值: %.2f\n状态: %s",
+	title := fmt.Sprintf("[AI Model Monitor] %s", rule.Name)
+	if status == "resolved" {
+		title = fmt.Sprintf("[AI Model Monitor] %s - Resolved", rule.Name)
+	}
+
+	text := fmt.Sprintf("Rule: %s\nProvider: %s\nModel: %s\nMetric: %s\nValue: %.2f\nThreshold: %.2f\nStatus: %s",
 		rule.Name, providerID, model, metricType, actualValue, rule.Threshold, status)
 
 	if rule.WebhookURL != "" {
-		payload := map[string]interface{}{
-			"msgtype": "text",
-			"text":    map[string]string{"content": text},
-			"title":   title,
+		result := sendWebhookWithRetry(rule, title, text)
+		if result.success {
+			db.Exec("UPDATE alert_events SET notified=1 WHERE rule_id=? AND provider_id=? AND model=? AND status=?",
+				rule.ID, providerID, model, status)
 		}
-		if strings.Contains(rule.WebhookURL, "hooks.slack.com") {
-			payload = map[string]interface{}{
-				"text": fmt.Sprintf("*%s*\n%s", title, text),
-			}
-		}
-		if strings.Contains(rule.WebhookURL, "feishu") || strings.Contains(rule.WebhookURL, "larksuite") {
-			payload = map[string]interface{}{
-				"msg_type": "text",
-				"content":  map[string]string{"text": text},
-			}
-		}
-
-		data, _ := json.Marshal(payload)
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Post(rule.WebhookURL, "application/json", bytes.NewReader(data))
-		if err != nil {
-			log.Printf("warn: webhook notify failed for rule %s: %v", rule.ID, err)
-			return
-		}
-		resp.Body.Close()
 	}
 
 	for _, channel := range rule.NotifyChannels {
 		log.Printf("alert: channel=%s rule=%s provider=%s model=%s value=%.2f status=%s", channel, rule.ID, providerID, model, actualValue, status)
+	}
+}
+
+func sendWebhookWithRetry(rule AlertRule, title, text string) notifyResult {
+	for attempt := 0; attempt < maxNotifyRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(notifyRetryBaseWait * time.Duration(1<<attempt))
+		}
+
+		err := doWebhookPost(rule.WebhookURL, title, text)
+		if err == nil {
+			return notifyResult{success: true}
+		}
+		log.Printf("warn: webhook attempt %d/%d failed for rule %s: %v",
+			attempt+1, maxNotifyRetries, rule.ID, err)
+	}
+	return notifyResult{err: fmt.Errorf("webhook failed after %d retries", maxNotifyRetries)}
+}
+
+func doWebhookPost(webhookURL, title, text string) error {
+	payload := buildWebhookPayload(webhookURL, title, text)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(webhookURL, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("http post: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, shortError(string(body)))
+	}
+	return nil
+}
+
+func buildWebhookPayload(webhookURL, title, text string) map[string]interface{} {
+	if strings.Contains(webhookURL, "hooks.slack.com") {
+		return map[string]interface{}{
+			"text": fmt.Sprintf("*%s*\n%s", title, text),
+		}
+	}
+	if strings.Contains(webhookURL, "feishu") || strings.Contains(webhookURL, "larksuite") {
+		return map[string]interface{}{
+			"msg_type": "text",
+			"content":  map[string]string{"text": text},
+		}
+	}
+	return map[string]interface{}{
+		"msgtype": "text",
+		"text":    map[string]string{"content": text},
+		"title":   title,
 	}
 }
