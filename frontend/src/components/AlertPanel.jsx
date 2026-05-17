@@ -38,7 +38,9 @@ export default function AlertPanel() {
   const loadEvents = async () => {
     try {
       setEvents(await api.getAlertEvents())
-    } catch (_) {}
+    } catch (e) {
+      setError(e.body || e.message)
+    }
   }
 
   const handleSubmit = async (e) => {

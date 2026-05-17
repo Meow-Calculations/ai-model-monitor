@@ -177,13 +177,20 @@ func autoCheckLoop(intervalSeconds int) {
 			continue
 		}
 
-		report := runProbe()
-		latestReportMu.Lock()
-		latestReport = report
-		latestReportMu.Unlock()
-		broadcastReport(report)
-		evaluateAlertRules(report)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("warn: auto check loop panic recovered: %v", r)
+				}
+				isProbing.Store(false)
+			}()
 
-		isProbing.Store(false)
+			report := runProbe()
+			latestReportMu.Lock()
+			latestReport = report
+			latestReportMu.Unlock()
+			broadcastReport(report)
+			evaluateAlertRules(report)
+		}()
 	}
 }

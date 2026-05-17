@@ -38,7 +38,9 @@ export default function UserPanel() {
             setReport(data)
             setError(null)
           }
-        } catch (_) {}
+        } catch (_) {
+          console.warn('SSE: failed to parse event data')
+        }
       }
 
       es.onerror = () => {
