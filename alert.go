@@ -262,6 +262,12 @@ func GetAlertEvents(limit int) ([]AlertEvent, error) {
 }
 
 func sendAlertNotification(rule AlertRule, providerID, model, metricType string, actualValue float64, status string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("warn: alert notification panic recovered for rule %s: %v", rule.ID, r)
+		}
+	}()
+
 	title := fmt.Sprintf("🔔 [AI Model Monitor] %s", rule.Name)
 	if status == "resolved" {
 		title = fmt.Sprintf("✅ [AI Model Monitor] %s 已恢复", rule.Name)
