@@ -286,7 +286,7 @@ func handleProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if p.ID == "" {
-			p.ID = uuid.New().String()[:8]
+			p.ID = generateProviderID()
 		}
 		if err := AddProvider(p); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -595,12 +595,12 @@ func runProbe() *DashboardReport {
 					if r := recover(); r != nil {
 						log.Printf("warn: probe panic for %s/%s: %v", j.provider.ID, j.model, r)
 						result = ProbeResult{
-							ProviderID: j.provider.ID,
+							ProviderID:   j.provider.ID,
 							ProviderName: j.provider.Name,
-							Model:      j.model,
-							Status:     "error",
-							Error:      fmt.Sprintf("internal panic: %v", r),
-							CheckedAt:  time.Now().Format("2006-01-02 15:04:05"),
+							Model:        j.model,
+							Status:       "error",
+							Error:        fmt.Sprintf("internal panic: %v", r),
+							CheckedAt:    time.Now().Format("2006-01-02 15:04:05"),
 						}
 					}
 				}()
@@ -881,4 +881,22 @@ func requireJSONContentType(next http.Handler) http.Handler {
 
 func sanitizeID(id string) string {
 	return strings.TrimSpace(validIDPattern.ReplaceAllString(id, ""))
+}
+
+func generateProviderID() string {
+	for attempts := 0; attempts < 20; attempts++ {
+		candidate := uuid.New().String()[:12]
+		cfg := GetConfig()
+		exists := false
+		for _, existing := range cfg.Providers {
+			if existing.ID == candidate {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			return candidate
+		}
+	}
+	return uuid.New().String()
 }
