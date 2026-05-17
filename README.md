@@ -81,16 +81,24 @@ ai-model-monitor/
 
 ## 快速开始
 
-### 方式 1：直接运行
+### 方式 1：下载预编译二进制
+
+从 [Releases](https://github.com/Meow-Calculations/ai-model-monitor/releases) 页面下载对应平台的二进制文件后直接运行：
+
+```bash
+./ai-model-monitor-v0.1.0-rc.1-linux-x64
+```
+
+浏览器打开 `http://localhost:8080`。首次运行会进入初始化页面，设置管理密码后即可登录管理。
+
+### 方式 2：自行编译
 
 ```bash
 go build -o ai-model-monitor.exe .
 ./ai-model-monitor.exe
 ```
 
-浏览器打开 `http://localhost:8080`。首次运行会进入初始化页面，设置管理密码后即可登录管理。
-
-### 方式 2：开发模式
+### 方式 3：开发模式
 
 ```bash
 # 终端 1：启动后端
@@ -251,7 +259,26 @@ set AMM_ENCRYPTION_KEY=<64位十六进制密钥>
 
 ## 支持的 Provider 类型
 
-openai · anthropic · deepseek · google · ollama · groq · openrouter · nvidia · azure · xai · dashscope · volcengine · minimax · kimi · modelscope
+| 类型 | 提供商 | API 协议 |
+|------|--------|---------|
+| `openai` | OpenAI | OpenAI 兼容 |
+| `anthropic` | Anthropic | Anthropic Messages |
+| `azure` | Azure OpenAI | OpenAI 兼容 |
+| `google` | Google Gemini | OpenAI 兼容 |
+| `deepseek` | DeepSeek | OpenAI 兼容 |
+| `zhipu` | 智谱 GLM | OpenAI 兼容 |
+| `siliconflow` | SiliconFlow | OpenAI 兼容 |
+| `moonshot` | Moonshot (月之暗面) | OpenAI 兼容 |
+| `kimi` | Kimi | OpenAI 兼容 |
+| `dashscope` | 阿里云 DashScope | OpenAI 兼容 |
+| `volcengine` | 火山引擎 | OpenAI 兼容 |
+| `minimax` | MiniMax | OpenAI 兼容 |
+| `modelscope` | ModelScope | OpenAI 兼容 |
+| `ollama` | Ollama (本地) | OpenAI 兼容 |
+| `groq` | Groq | OpenAI 兼容 |
+| `openrouter` | OpenRouter | OpenAI 兼容 |
+| `nvidia` | NVIDIA | OpenAI 兼容 |
+| `xai` | xAI Grok | OpenAI 兼容 |
 
 ## API Key 处理
 
@@ -287,6 +314,16 @@ openai · anthropic · deepseek · google · ollama · groq · openrouter · nvi
 | `alert_events` | 告警事件历史 |
 
 首次启动时，如存在旧的 `config.yaml` 会自动迁移到 SQLite。
+
+## 支持平台
+
+| 系统 | 架构 | 状态 |
+|------|------|------|
+| Linux | x64 / arm64 / arm / riscv64 / loong64 | ✅ |
+| Windows | x64 / arm64 | ✅ |
+| macOS | x64 / arm64 | ✅ |
+
+> 所有二进制由 CI 自动构建（CGO_ENABLED=0），纯静态编译，无运行时依赖。
 
 ## 测试验证
 
