@@ -109,27 +109,27 @@ func decryptAPIKey(encoded string) (string, error) {
 
 	key := getEncryptionKey()
 	if key == nil {
-		return encoded, nil
+		return "", fmt.Errorf("encryption key not available")
 	}
 
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return encoded, nil
+		return "", fmt.Errorf("decode api key: %w", err)
 	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return encoded, nil
+		return "", fmt.Errorf("create cipher: %w", err)
 	}
 
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
-		return encoded, nil
+		return "", fmt.Errorf("create gcm: %w", err)
 	}
 
 	nonceSize := aead.NonceSize()
 	if len(data) < nonceSize+1 {
-		return encoded, nil
+		return "", fmt.Errorf("ciphertext too short")
 	}
 
 	nonce := data[:nonceSize]
@@ -137,7 +137,7 @@ func decryptAPIKey(encoded string) (string, error) {
 
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return encoded, nil
+		return "", fmt.Errorf("decrypt api key: %w", err)
 	}
 
 	return string(plaintext), nil

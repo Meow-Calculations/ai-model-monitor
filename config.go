@@ -310,7 +310,9 @@ func LoadConfig() (*AppConfig, error) {
 		}
 		json.Unmarshal([]byte(modelsJSON), &p.Models)
 		decrypted, err := decryptAPIKey(p.APIKey)
-		if err == nil {
+		if err != nil {
+			log.Printf("warn: decrypt api key for provider %s: %v", p.ID, err)
+		} else {
 			p.APIKey = decrypted
 		}
 		cfg.Providers = append(cfg.Providers, p)

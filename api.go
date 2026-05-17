@@ -582,15 +582,30 @@ func runProbe() *DashboardReport {
 		wg.Add(1)
 		go func(j probeJob) {
 			defer wg.Done()
+
 			pSem := providerSem[j.provider.ID]
-
 			pSem <- struct{}{}
-			defer func() { <-pSem }()
-
 			globalSem <- struct{}{}
-			defer func() { <-globalSem }()
 
-			result := probeModel(j.provider, j.model, cfg)
+			var result ProbeResult
+			func() {
+				defer func() {
+					<-globalSem
+					<-pSem
+					if r := recover(); r != nil {
+						log.Printf("warn: probe panic for %s/%s: %v", j.provider.ID, j.model, r)
+						result = ProbeResult{
+							ProviderID: j.provider.ID,
+							ProviderName: j.provider.Name,
+							Model:      j.model,
+							Status:     "error",
+							Error:      fmt.Sprintf("internal panic: %v", r),
+							CheckedAt:  time.Now().Format("2006-01-02 15:04:05"),
+						}
+					}
+				}()
+				result = probeModel(j.provider, j.model, cfg)
+			}()
 
 			resultsMu.Lock()
 			results = append(results, result)
