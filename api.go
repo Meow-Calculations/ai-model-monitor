@@ -4,10 +4,8 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,8 +13,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-var validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 var (
 	isProbing      atomic.Bool
@@ -861,26 +857,6 @@ func maxBodySizeMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func requireJSONContentType(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost || r.Method == http.MethodPut {
-			ct := r.Header.Get("Content-Type")
-			if ct == "" || (!strings.HasPrefix(ct, "application/json") && !strings.HasPrefix(ct, "text/plain")) {
-				if strings.HasPrefix(r.URL.Path, "/api/") {
-					r.Body = io.NopCloser(strings.NewReader("{}"))
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func sanitizeID(id string) string {
-	return strings.TrimSpace(validIDPattern.ReplaceAllString(id, ""))
 }
 
 func generateProviderID() string {

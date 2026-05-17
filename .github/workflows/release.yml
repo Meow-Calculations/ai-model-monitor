@@ -66,11 +66,6 @@ jobs:
       matrix:
         include:
           - goos: windows
-            goarch: "386"
-            platform: windows
-            arch: x86
-            ext: .exe
-          - goos: windows
             goarch: amd64
             platform: windows
             arch: x64
