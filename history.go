@@ -92,6 +92,8 @@ func LoadHistoryRecords(providerID, model string, limit int) []HistoryRecord {
 	return records
 }
 
+const maxHistoryLoad = 100000
+
 func LoadAllHistory() (map[string][]HistoryRecord, error) {
 	return LoadAllHistorySince("")
 }
@@ -103,7 +105,8 @@ func LoadAllHistorySince(since string) (map[string][]HistoryRecord, error) {
 		query += " WHERE checked_at >= ?"
 		args = append(args, since)
 	}
-	query += " ORDER BY checked_at ASC"
+	query += " ORDER BY checked_at ASC LIMIT ?"
+	args = append(args, maxHistoryLoad)
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
