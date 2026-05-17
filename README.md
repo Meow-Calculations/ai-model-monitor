@@ -173,8 +173,8 @@ API Key 使用 **AES-256-GCM** 自动加密后写入 SQLite，读取时自动解
 ### 加密密钥来源（优先级由高到低）
 
 1. **环境变量 `AMM_ENCRYPTION_KEY`**：64 位十六进制字符串（32 字节），推荐使用
-2. **管理密码哈希**：从管理员密码 PBKDF2-SHA256 哈希派生
-3. **无加密（兼容模式）**：仅首次启动过渡期
+2. **自动生成密钥**：首次启动自动生成 32 字节随机密钥并持久化到 SQLite
+3. **管理密码哈希**：从管理员密码 PBKDF2-SHA256 哈希派生（自动生成密钥不存在时的回退）
 
 ### 生成密钥
 
@@ -301,6 +301,51 @@ npm --prefix frontend run build
 # 编译
 go build -o ai-model-monitor.exe .
 ```
+
+## 更新日志
+
+### v0.1.0-rc.1（2025-05-17）
+
+**安全修复**
+- API Key 解密失败时返回明确错误而非原始密文字符串（消除密钥泄露风险）
+- 所有 Webhook 通知 goroutine 添加 panic 恢复，防止崩溃
+- 自动探测循环添加 panic 恢复，防止 `isProbing` 永久锁定
+- Provider 默认 ID 使用完整碰撞检测与重试机制，消除覆盖现有配置风险
+
+**稳定性改进**
+- `LoadAllHistory` 添加 100000 条硬上限，防止历史数据膨胀导致 OOM
+- 并发探测 goroutine 添加 panic 恢复，确保信号量正确释放
+- SQLite 读取操作不再因锁冲突返回错误
+- 登录限流器支持测试重置
+
+**代码质量**
+- 移除 `sanitizeID`、`requireJSONContentType`、`validIDPattern` 等死代码
+- 清理未使用的 Go 标准库导入
+- 前端 `AlertPanel` 事件加载错误不再静默丢弃
+- 前端 SSE 消息解析失败输出 `console.warn` 便于调试
+
+**CI/CD**
+- 移除了 Windows 386 构建目标
+
+### v0.1.0-beta.2
+
+**安全**
+- API Key AES-256-GCM 加密存储，密钥自动生成并持久化，支持环境变量覆盖
+- 登录端点添加 IP 级别的暴力破解防护（5 次/分钟 → 锁定 1 分钟）
+
+**新功能**
+- 告警通知系统：规则 CRUD、评估引擎、Webhook 推送（钉钉/飞书/Slack）
+- SSE 实时数据流：EventSource 替代轮询，延迟 < 1s
+- 数据导出：CSV（最近 10000 条）+ JSON（最新报告）
+- 代码分割：React.lazy + Suspense，首屏 JS 体积 256 kB
+
+**性能优化**
+- SQLite 复合索引、N+1 查询合并为批量加载、统计单次遍历
+- HTTP 连接池复用、启动流程优化
+
+**Bug 修复**
+- SSE 连接控制台报错修复、配置保存覆盖 API Key 修复
+- 并发写入事务修复、isProbing 竞态条件修复
 
 ## License
 
