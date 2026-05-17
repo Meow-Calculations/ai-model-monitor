@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -12,10 +13,20 @@ import (
 
 const maxRetries = 2
 
+var probeHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        25,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false,
+	},
+}
+
 type probeAPIHandler struct {
-	urlSuffix   string
-	buildBody   func(model string, cfg *AppConfig) map[string]interface{}
-	setHeaders func(req *http.Request, provider Provider)
+	urlSuffix     string
+	buildBody     func(model string, cfg *AppConfig) map[string]interface{}
+	setHeaders    func(req *http.Request, provider Provider)
 	parseResponse func(body []byte) string
 }
 
@@ -100,6 +111,16 @@ func getProbeHandler(providerType string) probeAPIHandler {
 	}
 }
 
+func safeParseResponse(body []byte, parseFn func([]byte) string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("warn: probe response parse panic recovered: %v", r)
+			result = ""
+		}
+	}()
+	return parseFn(body)
+}
+
 func probeModel(provider Provider, model string, cfg *AppConfig) ProbeResult {
 	start := time.Now()
 	result := ProbeResult{
@@ -140,11 +161,8 @@ func probeModel(provider Provider, model string, cfg *AppConfig) ProbeResult {
 
 		handler.setHeaders(req, provider)
 
-		client := &http.Client{
-			Timeout: time.Duration(cfg.TimeoutSeconds * float64(time.Second)),
-		}
-
-		resp, err := client.Do(req)
+		probeHTTPClient.Timeout = time.Duration(cfg.TimeoutSeconds * float64(time.Second))
+		resp, err := probeHTTPClient.Do(req)
 		latencyMs := int(time.Since(start).Milliseconds())
 		result.LatencyMs = latencyMs
 
@@ -185,7 +203,7 @@ func probeModel(provider Provider, model string, cfg *AppConfig) ProbeResult {
 			return result
 		}
 
-		completionText := handler.parseResponse(respBody)
+		completionText := safeParseResponse(respBody, handler.parseResponse)
 
 		result.ResponseText = completionText
 		if len(completionText) > 80 {

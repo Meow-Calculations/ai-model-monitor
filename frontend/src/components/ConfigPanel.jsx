@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { getExportDownloadURL } from '../api'
 
 const PROVIDER_TYPES = [
   'openai', 'anthropic', 'deepseek', 'google', 'ollama',
@@ -232,6 +233,15 @@ function GeneralSettings({ config, onChange }) {
             )}
           </div>
         ))}
+        <div className="settings-divider" />
+        <div className="form-field" style={{gridColumn:'1/-1'}}>
+          <label>数据导出</label>
+          <div style={{display:'flex',gap:'8px',marginTop:'4px'}}>
+            <a href={getExportDownloadURL('csv')} className="btn-soft" download>导出 CSV</a>
+            <a href={getExportDownloadURL('json')} className="btn-soft" download>导出 JSON</a>
+          </div>
+          <p style={{margin:'4px 0 0',fontSize:'12px',color:'var(--text-muted)'}}>导出历史探测数据，CSV 包含最近 10000 条记录，JSON 为最新报告全文</p>
+        </div>
       </div>
     </section>
   )

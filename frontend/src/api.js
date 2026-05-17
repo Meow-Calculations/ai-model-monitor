@@ -110,6 +110,31 @@ export function getHistory(key) {
   return request(`/history${params}`)
 }
 
+export function getAlertRules() {
+  return adminRequest('/alerts/rules')
+}
+
+export function saveAlertRule(rule) {
+  return adminRequest('/alerts/rules', {
+    method: 'POST',
+    body: JSON.stringify(rule),
+  })
+}
+
+export function deleteAlertRule(id) {
+  return adminRequest(`/alerts/rules?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function getAlertEvents() {
+  return adminRequest('/alerts/events')
+}
+
+export function getExportDownloadURL(format) {
+  return `${ADMIN_API_BASE}/export/${format}`
+}
+
 // CDN icons with fallback to inline SVG
 const PROVIDER_ICONS = {
   openai: 'https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/openai.svg',

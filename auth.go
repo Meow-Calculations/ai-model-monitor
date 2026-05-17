@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crypto/pbkdf2"
@@ -35,19 +36,54 @@ type ipRateLimit struct {
 var (
 	loginAttempts   map[string]*ipRateLimit
 	loginAttemptsMu sync.Mutex
-	rateLimitInit   sync.Once
+	rateLimitInited atomic.Bool
+	rateLimitStop   chan struct{}
+	rateLimitStopMu sync.Mutex
 )
 
 func initRateLimiter() {
-	rateLimitInit.Do(func() {
-		loginAttempts = make(map[string]*ipRateLimit)
-		go rateLimitCleanup()
-	})
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	if rateLimitInited.Load() {
+		return
+	}
+	loginAttempts = make(map[string]*ipRateLimit)
+	rateLimitInited.Store(true)
+
+	rateLimitStopMu.Lock()
+	if rateLimitStop != nil {
+		close(rateLimitStop)
+	}
+	rateLimitStop = make(chan struct{})
+	stopCh := rateLimitStop
+	rateLimitStopMu.Unlock()
+
+	go rateLimitCleanup(stopCh)
 }
 
-func rateLimitCleanup() {
+func ResetRateLimiter() {
+	rateLimitStopMu.Lock()
+	if rateLimitStop != nil {
+		close(rateLimitStop)
+		rateLimitStop = nil
+	}
+	rateLimitStopMu.Unlock()
+
+	loginAttemptsMu.Lock()
+	loginAttempts = make(map[string]*ipRateLimit)
+	rateLimitInited.Store(false)
+	loginAttemptsMu.Unlock()
+}
+
+func rateLimitCleanup(stop chan struct{}) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
 	for {
-		time.Sleep(5 * time.Minute)
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+		}
 		loginAttemptsMu.Lock()
 		now := time.Now()
 		for ip, entry := range loginAttempts {

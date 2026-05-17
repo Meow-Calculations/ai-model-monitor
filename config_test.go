@@ -4,6 +4,7 @@ import "testing"
 
 func setupConfigTestDB(t *testing.T) {
 	t.Helper()
+	ResetRateLimiter()
 	if db != nil {
 		CloseDB()
 	}
@@ -139,4 +140,52 @@ func providerRowCount(t *testing.T) int {
 		t.Fatalf("count providers: %v", err)
 	}
 	return count
+}
+
+func TestNormalizeConfigPreservesAutoCheckZero(t *testing.T) {
+	cfg := &AppConfig{
+		AutoCheckInterval:   0,
+		TimeoutSeconds:      30,
+		SlowThresholdMs:     8000,
+		Concurrency:         3,
+		ProviderConcurrency: 1,
+		HistorySize:         30,
+		StatsWindowDays:     7,
+		Port:                8080,
+		ProbePrompt:         "test",
+		ProbeSystemPrompt:   "test",
+	}
+	NormalizeConfig(cfg)
+	if cfg.AutoCheckInterval != 0 {
+		t.Fatalf("expected AutoCheckInterval=0, got %d", cfg.AutoCheckInterval)
+	}
+}
+
+func TestNormalizeConfigClampsMinimumValues(t *testing.T) {
+	cfg := &AppConfig{
+		AutoCheckInterval:   -1,
+		TimeoutSeconds:      0,
+		SlowThresholdMs:     0,
+		Concurrency:         0,
+		ProviderConcurrency: 0,
+		HistorySize:         0,
+		StatsWindowDays:     0,
+		Port:                99999,
+	}
+	NormalizeConfig(cfg)
+	if cfg.AutoCheckInterval != 0 {
+		t.Fatalf("expected AutoCheckInterval=0, got %d", cfg.AutoCheckInterval)
+	}
+	if cfg.TimeoutSeconds < 1 {
+		t.Fatalf("expected TimeoutSeconds >= 1, got %g", cfg.TimeoutSeconds)
+	}
+	if cfg.Concurrency < 1 {
+		t.Fatalf("expected Concurrency >= 1, got %d", cfg.Concurrency)
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		t.Fatalf("expected Port in 1-65535, got %d", cfg.Port)
+	}
+	if cfg.ProbePrompt == "" {
+		t.Fatal("expected ProbePrompt to have default value")
+	}
 }

@@ -3,23 +3,97 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 )
 
+var validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
 var (
-	probingMu      sync.Mutex
-	isProbing      bool
+	isProbing      atomic.Bool
 	latestReport   *DashboardReport
 	latestReportMu sync.RWMutex
+
+	sseClients   map[chan *DashboardReport]struct{}
+	sseClientsMu sync.Mutex
 )
 
+func init() {
+	sseClients = make(map[chan *DashboardReport]struct{})
+}
+
+func broadcastReport(report *DashboardReport) {
+	sseClientsMu.Lock()
+	defer sseClientsMu.Unlock()
+	for ch := range sseClients {
+		select {
+		case ch <- report:
+		default:
+		}
+	}
+}
+
+func handleSSE(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	ch := make(chan *DashboardReport, 4)
+	sseClientsMu.Lock()
+	sseClients[ch] = struct{}{}
+	sseClientsMu.Unlock()
+
+	defer func() {
+		sseClientsMu.Lock()
+		delete(sseClients, ch)
+		sseClientsMu.Unlock()
+	}()
+
+	latestReportMu.RLock()
+	if latestReport != nil {
+		data, _ := json.Marshal(latestReport)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+	latestReportMu.RUnlock()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case report, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
 func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
-	adminHandler := adminAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	adminHandler := maxBodySizeMiddleware(adminAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/admin/config", "/api/config":
 			handleConfig(w, r)
@@ -31,31 +105,47 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 			handleStatus(w, r)
 		case "/api/admin/history":
 			handleHistory(w, r)
+		case "/api/admin/alerts/rules", "/api/alerts/rules":
+			handleAlertRules(w, r)
+		case "/api/admin/alerts/events", "/api/alerts/events":
+			handleAlertEvents(w, r)
+		case "/api/admin/export/csv":
+			handleExportCSV(w, r)
+		case "/api/admin/export/json":
+			handleExportJSON(w, r)
 		default:
 			http.NotFound(w, r)
 		}
-	}), adminToken)
+	}), adminToken))
 
 	mux.HandleFunc("/api/setup-status", handleSetupStatus)
-	mux.HandleFunc("/api/setup", handleSetup)
-	mux.HandleFunc("/api/login", handleLogin)
+	mux.HandleFunc("/api/setup", maxBodySizeMiddleware(http.HandlerFunc(handleSetup)).ServeHTTP)
+	mux.HandleFunc("/api/login", maxBodySizeMiddleware(http.HandlerFunc(handleLogin)).ServeHTTP)
 	mux.HandleFunc("/api/logout", handleLogout)
 
-	for _, path := range []string{
+	adminPaths := []string{
 		"/api/admin/config",
 		"/api/admin/providers",
 		"/api/admin/probe",
 		"/api/admin/status",
 		"/api/admin/history",
+		"/api/admin/alerts/rules",
+		"/api/admin/alerts/events",
+		"/api/admin/export/csv",
+		"/api/admin/export/json",
 		"/api/config",
 		"/api/providers",
 		"/api/probe",
-	} {
+		"/api/alerts/rules",
+		"/api/alerts/events",
+	}
+	for _, path := range adminPaths {
 		mux.Handle(path, adminHandler)
 	}
 
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/history", handleHistory)
+	mux.HandleFunc("/api/events", handleSSE)
 }
 
 func handleSetupStatus(w http.ResponseWriter, r *http.Request) {
@@ -247,29 +337,24 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	probingMu.Lock()
-	if isProbing {
-		probingMu.Unlock()
+	if !isProbing.CompareAndSwap(false, true) {
 		json.NewEncoder(w).Encode(map[string]string{
 			"status":  "already_probing",
 			"message": "探测正在进行中，请稍后再试",
 		})
 		return
 	}
-	isProbing = true
-	probingMu.Unlock()
 
-	defer func() {
-		probingMu.Lock()
-		isProbing = false
-		probingMu.Unlock()
-	}()
+	defer isProbing.Store(false)
 
 	report := runProbe()
 
 	latestReportMu.Lock()
 	latestReport = report
 	latestReportMu.Unlock()
+
+	broadcastReport(report)
+	go evaluateAlertRules(report)
 
 	json.NewEncoder(w).Encode(report)
 }
@@ -327,6 +412,101 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(h)
+}
+
+func handleAlertRules(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		json.NewEncoder(w).Encode(GetAlertRules())
+
+	case http.MethodPost:
+		var rule AlertRule
+		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if rule.Name == "" || rule.MetricType == "" || rule.Condition == "" {
+			http.Error(w, "name, metric_type, condition are required", http.StatusBadRequest)
+			return
+		}
+		if err := SaveAlertRule(rule); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if err := DeleteAlertRule(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleAlertEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	events, err := GetAlertEvents(50)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if events == nil {
+		events = []AlertEvent{}
+	}
+	json.NewEncoder(w).Encode(events)
+}
+
+func handleExportCSV(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=history.csv")
+
+	rows, err := db.Query("SELECT provider_id, model, status, latency_ms, checked_at FROM history ORDER BY checked_at DESC LIMIT 10000")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	w.Write([]byte("provider_id,model,status,latency_ms,checked_at\n"))
+	for rows.Next() {
+		var providerID, model, status, checkedAt string
+		var latencyMs int
+		if err := rows.Scan(&providerID, &model, &status, &latencyMs, &checkedAt); err != nil {
+			continue
+		}
+		line := fmt.Sprintf("%s,%s,%s,%d,%s\n", providerID, model, status, latencyMs, checkedAt)
+		w.Write([]byte(line))
+	}
+}
+
+func handleExportJSON(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=history.json")
+
+	latestReportMu.RLock()
+	report := latestReport
+	latestReportMu.RUnlock()
+
+	if report != nil {
+		json.NewEncoder(w).Encode(report)
+	} else {
+		json.NewEncoder(w).Encode(map[string]string{"message": "no data available"})
+	}
 }
 
 func buildReportFromHistory(cfg *AppConfig) *DashboardReport {
@@ -416,11 +596,13 @@ func runProbe() *DashboardReport {
 			results = append(results, result)
 			resultsMu.Unlock()
 
-			AppendHistoryRecord(j.provider.ID, j.model, HistoryRecord{
+			if err := AppendHistoryRecord(j.provider.ID, j.model, HistoryRecord{
 				Status:    result.Status,
 				LatencyMs: result.LatencyMs,
 				CheckedAt: result.CheckedAt,
-			}, cfg.HistorySize)
+			}, cfg.HistorySize); err != nil {
+				log.Printf("warn: append history for %s/%s: %v", j.provider.ID, j.model, err)
+			}
 		}(job)
 	}
 	wg.Wait()
@@ -431,6 +613,11 @@ func runProbe() *DashboardReport {
 func buildReport(results []ProbeResult, cfg *AppConfig, startTime time.Time) *DashboardReport {
 	grouped := make(map[string]*ProviderStatus)
 	var providerOrder []string
+
+	allHistory, err := LoadAllHistorySince(startTime.AddDate(0, 0, -cfg.StatsWindowDays).Format("2006-01-02 15:04:05"))
+	if err != nil {
+		allHistory = make(map[string][]HistoryRecord)
+	}
 
 	for _, r := range results {
 		if _, ok := grouped[r.ProviderID]; !ok {
@@ -446,8 +633,11 @@ func buildReport(results []ProbeResult, cfg *AppConfig, startTime time.Time) *Da
 		}
 		p := grouped[r.ProviderID]
 
-		// Load history from SQLite
-		records := LoadHistoryRecords(r.ProviderID, r.Model, 0)
+		key := fmt.Sprintf("%s::%s", r.ProviderID, r.Model)
+		records := allHistory[key]
+		if records == nil {
+			records = []HistoryRecord{}
+		}
 
 		ms := ModelStatus{
 			ProviderID:     r.ProviderID,
@@ -458,10 +648,18 @@ func buildReport(results []ProbeResult, cfg *AppConfig, startTime time.Time) *Da
 			Status:         r.Status,
 			StatusLabel:    statusLabel(r.Status),
 			LatencyMs:      r.LatencyMs,
-			AvgLatency24h:  avgLatency24h(records),
-			Availability:   availability(records),
-			WeeklySuccess:  weeklySuccessText(records),
 			ShowCurveChart: cfg.ShowCurveChart,
+		}
+
+		if len(records) > 0 {
+			cs := computeStats(records, cfg.StatsWindowDays)
+			ms.AvgLatency24h = cs.avgLatency24h
+			ms.Availability = cs.availability
+			ms.WeeklySuccess = cs.weeklySuccess
+		} else {
+			ms.AvgLatency24h = "N/A"
+			ms.Availability = "0.00%"
+			ms.WeeklySuccess = "0/0"
 		}
 
 		if cfg.ShowErrorDetail && r.Error != "" {
@@ -603,17 +801,69 @@ func corsMiddleware(next http.Handler) http.Handler {
 			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
-			} else {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
-			if r.Method == "OPTIONS" {
-				w.WriteHeader(http.StatusOK)
-				return
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+				if r.Method == "OPTIONS" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Content-Security-Policy", strings.Join([]string{
+				"default-src 'self'",
+				"script-src 'self'",
+				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+				"font-src 'self' https://fonts.gstatic.com",
+				"img-src 'self' data: https://cdn.jsdelivr.net",
+				"connect-src 'self'",
+				"frame-ancestors 'none'",
+				"form-action 'self'",
+			}, "; "))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+const maxRequestBodyBytes = 1_048_576
+
+func maxBodySizeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func requireJSONContentType(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut {
+			ct := r.Header.Get("Content-Type")
+			if ct == "" || (!strings.HasPrefix(ct, "application/json") && !strings.HasPrefix(ct, "text/plain")) {
+				if strings.HasPrefix(r.URL.Path, "/api/") {
+					r.Body = io.NopCloser(strings.NewReader("{}"))
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sanitizeID(id string) string {
+	return strings.TrimSpace(validIDPattern.ReplaceAllString(id, ""))
 }

@@ -43,12 +43,10 @@ func main() {
 	}
 	MigrateYAMLToDB(yamlPath)
 
-	// Load config from SQLite
 	cfg, err := LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	SaveConfig(cfg)
 
 	// Load latest report from history so frontend never shows "no data" on startup
 	if len(cfg.Providers) > 0 {
@@ -56,6 +54,7 @@ func main() {
 		latestReportMu.Lock()
 		latestReport = report
 		latestReportMu.Unlock()
+		broadcastReport(report)
 	}
 
 	staticDir = filepath.Join(baseDir, "static")
@@ -67,13 +66,15 @@ func main() {
 	mux := http.NewServeMux()
 	registerAPIRoutes(mux, authToken)
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			mux.ServeHTTP(w, r)
 			return
 		}
 		serveStatic(w, r)
 	})
+
+	handler = securityHeadersMiddleware(handler)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("AI Model Monitor starting on http://localhost%s", addr)
@@ -172,21 +173,17 @@ func autoCheckLoop(intervalSeconds int) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		probingMu.Lock()
-		if isProbing {
-			probingMu.Unlock()
+		if !isProbing.CompareAndSwap(false, true) {
 			continue
 		}
-		isProbing = true
-		probingMu.Unlock()
 
 		report := runProbe()
 		latestReportMu.Lock()
 		latestReport = report
 		latestReportMu.Unlock()
+		broadcastReport(report)
+		evaluateAlertRules(report)
 
-		probingMu.Lock()
-		isProbing = false
-		probingMu.Unlock()
+		isProbing.Store(false)
 	}
 }

@@ -4,37 +4,52 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
-func AppendHistoryRecord(providerID, model string, record HistoryRecord, maxSize int) {
-	// Insert the new record
-	_, err := db.Exec(
-		"INSERT OR REPLACE INTO history(provider_id, model, status, latency_ms, checked_at) VALUES(?, ?, ?, ?, ?)",
-		providerID, model, record.Status, record.LatencyMs, record.CheckedAt,
-	)
-	if err != nil {
-		return
-	}
+func AppendHistoryRecord(providerID, model string, record HistoryRecord, maxSize int) error {
+	return withRetry("AppendHistoryRecord", func() error {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
 
-	// Prune old records: keep only up to maxSize*16 per key
-	maxStore := maxSize * 16
-	if maxStore > 0 {
-		// Delete oldest records beyond maxStore
-		db.Exec(`DELETE FROM history WHERE id IN (
-			SELECT id FROM history
-			WHERE provider_id = ? AND model = ?
-			ORDER BY checked_at DESC
-			LIMIT -1 OFFSET ?
-		)`, providerID, model, maxStore)
-	}
+		_, err = tx.Exec(
+			"INSERT OR REPLACE INTO history(provider_id, model, status, latency_ms, checked_at) VALUES(?, ?, ?, ?, ?)",
+			providerID, model, record.Status, record.LatencyMs, record.CheckedAt,
+		)
+		if err != nil {
+			return fmt.Errorf("insert history: %w", err)
+		}
 
-	// Prune records outside the stats window
-	cfg := GetConfig()
-	windowStart := time.Now().AddDate(0, 0, -cfg.StatsWindowDays).Format("2006-01-02 15:04:05")
-	db.Exec(`DELETE FROM history WHERE provider_id = ? AND model = ? AND checked_at < ?`,
-		providerID, model, windowStart)
+		maxStore := maxSize * 16
+		if maxStore > 0 {
+			_, err = tx.Exec(`DELETE FROM history
+				WHERE provider_id = ? AND model = ?
+				AND id NOT IN (
+					SELECT id FROM history
+					WHERE provider_id = ? AND model = ?
+					ORDER BY checked_at DESC
+					LIMIT ?
+				)`, providerID, model, providerID, model, maxStore)
+			if err != nil {
+				return fmt.Errorf("prune history: %w", err)
+			}
+		}
+
+		cfg := GetConfig()
+		windowStart := time.Now().AddDate(0, 0, -cfg.StatsWindowDays).Format("2006-01-02 15:04:05")
+		_, err = tx.Exec(`DELETE FROM history WHERE provider_id = ? AND model = ? AND checked_at < ?`,
+			providerID, model, windowStart)
+		if err != nil {
+			return fmt.Errorf("prune window: %w", err)
+		}
+
+		return tx.Commit()
+	})
 }
 
 func LoadHistoryRecords(providerID, model string, limit int) []HistoryRecord {
@@ -78,7 +93,19 @@ func LoadHistoryRecords(providerID, model string, limit int) []HistoryRecord {
 }
 
 func LoadAllHistory() (map[string][]HistoryRecord, error) {
-	rows, err := db.Query("SELECT provider_id, model, status, latency_ms, checked_at FROM history ORDER BY checked_at ASC")
+	return LoadAllHistorySince("")
+}
+
+func LoadAllHistorySince(since string) (map[string][]HistoryRecord, error) {
+	query := "SELECT provider_id, model, status, latency_ms, checked_at FROM history"
+	var args []interface{}
+	if since != "" {
+		query += " WHERE checked_at >= ?"
+		args = append(args, since)
+	}
+	query += " ORDER BY checked_at ASC"
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query all history: %w", err)
 	}
@@ -140,63 +167,6 @@ func latencyCurve(records []HistoryRecord, historySize int) []int {
 	return curve
 }
 
-func avgLatency24h(records []HistoryRecord) string {
-	windowStart := time.Now().Add(-24 * time.Hour)
-	var valid []int
-	for _, r := range records {
-		if r.Status == "ok" || r.Status == "slow" {
-			t, err := time.Parse("2006-01-02 15:04:05", r.CheckedAt)
-			if err == nil && t.After(windowStart) {
-				valid = append(valid, r.LatencyMs)
-			}
-		}
-	}
-	if len(valid) == 0 {
-		return "N/A"
-	}
-	sum := 0
-	for _, v := range valid {
-		sum += v
-	}
-	avg := sum / len(valid)
-	return fmt.Sprintf("%d ms", avg)
-}
-
-func availability(records []HistoryRecord) string {
-	cfg := GetConfig()
-	windowStart := time.Now().AddDate(0, 0, -cfg.StatsWindowDays)
-	var total, reachable int
-	for _, r := range records {
-		t, err := time.Parse("2006-01-02 15:04:05", r.CheckedAt)
-		if err != nil || t.After(windowStart) {
-			total++
-			if r.Status == "ok" || r.Status == "slow" {
-				reachable++
-			}
-		}
-	}
-	if total == 0 {
-		return "0.00%"
-	}
-	return fmt.Sprintf("%.2f%%", float64(reachable)/float64(total)*100)
-}
-
-func weeklySuccessText(records []HistoryRecord) string {
-	cfg := GetConfig()
-	windowStart := time.Now().AddDate(0, 0, -cfg.StatsWindowDays)
-	var total, success int
-	for _, r := range records {
-		t, err := time.Parse("2006-01-02 15:04:05", r.CheckedAt)
-		if err != nil || t.After(windowStart) {
-			total++
-			if r.Status == "ok" || r.Status == "slow" {
-				success++
-			}
-		}
-	}
-	return fmt.Sprintf("%d/%d", success, total)
-}
-
 func extractTimeLabels(records []HistoryRecord, historySize int) []TimeLabel {
 	start := 0
 	if len(records) > historySize {
@@ -256,4 +226,62 @@ func shortError(s string) string {
 		return s
 	}
 	return s[:119] + "..."
+}
+
+type computedStats struct {
+	avgLatency24h string
+	availability  string
+	weeklySuccess string
+}
+
+func computeStats(records []HistoryRecord, statsWindowDays int) computedStats {
+	now := time.Now()
+	windowStart := now.AddDate(0, 0, -statsWindowDays)
+	dayAgo := now.Add(-24 * time.Hour)
+
+	var (
+		total24hSum int
+		total24hCnt int
+		windowTotal int
+		windowReach int
+		windowSucc  int
+	)
+
+	for _, r := range records {
+		t, err := time.Parse("2006-01-02 15:04:05", r.CheckedAt)
+		if err != nil {
+			continue
+		}
+
+		if t.After(windowStart) {
+			windowTotal++
+			if r.Status == "ok" || r.Status == "slow" {
+				windowReach++
+				windowSucc++
+			}
+		}
+
+		if (r.Status == "ok" || r.Status == "slow") && t.After(dayAgo) {
+			total24hSum += r.LatencyMs
+			total24hCnt++
+		}
+	}
+
+	var s computedStats
+
+	if total24hCnt > 0 {
+		s.avgLatency24h = strconv.Itoa(total24hSum/total24hCnt) + " ms"
+	} else {
+		s.avgLatency24h = "N/A"
+	}
+
+	if windowTotal > 0 {
+		s.availability = fmt.Sprintf("%.2f%%", float64(windowReach)/float64(windowTotal)*100)
+		s.weeklySuccess = fmt.Sprintf("%d/%d", windowSucc, windowTotal)
+	} else {
+		s.availability = "0.00%"
+		s.weeklySuccess = "0/0"
+	}
+
+	return s
 }

@@ -24,6 +24,17 @@ func getEncryptionKey() []byte {
 	}
 
 	if db != nil {
+		var storedKey string
+		err := db.QueryRow("SELECT value FROM config WHERE key = ?", "encryption_key").Scan(&storedKey)
+		if err == nil && storedKey != "" {
+			key, err := hex.DecodeString(storedKey)
+			if err == nil && len(key) == encryptionKeyLength {
+				return key
+			}
+		}
+	}
+
+	if db != nil {
 		var hash string
 		err := db.QueryRow("SELECT value FROM config WHERE key = ?", adminPasswordKey).Scan(&hash)
 		if err == nil && hash != "" {
@@ -33,6 +44,32 @@ func getEncryptionKey() []byte {
 	}
 
 	return nil
+}
+
+func ensureEncryptionKeyExists() {
+	if db == nil {
+		return
+	}
+
+	var existing string
+	if db.QueryRow("SELECT value FROM config WHERE key = ?", "encryption_key").Scan(&existing) == nil && existing != "" {
+		return
+	}
+
+	existingKey := getEncryptionKey()
+	if existingKey != nil {
+		db.Exec("INSERT OR REPLACE INTO config(key, value) VALUES(?, ?)",
+			"encryption_key", hex.EncodeToString(existingKey))
+		return
+	}
+
+	key := make([]byte, encryptionKeyLength)
+	if _, err := rand.Read(key); err != nil {
+		log.Printf("warn: failed to generate encryption key: %v", err)
+		return
+	}
+	db.Exec("INSERT OR REPLACE INTO config(key, value) VALUES(?, ?)",
+		"encryption_key", hex.EncodeToString(key))
 }
 
 func encryptAPIKey(plaintext string) (string, error) {
