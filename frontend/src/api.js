@@ -97,6 +97,13 @@ export function removeProvider(id) {
   })
 }
 
+export function fetchProviderModels(providerId) {
+  return adminRequest('/providers/fetch-models', {
+    method: 'POST',
+    body: JSON.stringify({ provider_id: providerId }),
+  })
+}
+
 export function runProbe() {
   return adminRequest('/probe', { method: 'POST' })
 }

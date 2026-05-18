@@ -7,6 +7,7 @@ export default function UserPanel() {
   const [error, setError] = useState(null)
   const esRef = useRef(null)
   const pollingRef = useRef(null)
+  const retryCountRef = useRef(0)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -28,28 +29,37 @@ export default function UserPanel() {
     if (import.meta.env.DEV) {
       pollingRef.current = setInterval(loadStatus, 30_000)
     } else {
-      const es = new EventSource('/api/events')
-      esRef.current = es
+      retryCountRef.current = 0
+      const connectSSE = () => {
+        const es = new EventSource('/api/events')
+        esRef.current = es
 
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          if (data && data.providers) {
-            setReport(data)
-            setError(null)
+        es.onmessage = (event) => {
+          retryCountRef.current = 0
+          try {
+            const data = JSON.parse(event.data)
+            if (data && data.providers) {
+              setReport(data)
+              setError(null)
+            }
+          } catch (_) {
+            console.warn('SSE: failed to parse event data')
           }
-        } catch (_) {
-          console.warn('SSE: failed to parse event data')
         }
-      }
 
-      es.onerror = () => {
-        es.close()
-        esRef.current = null
-        if (!pollingRef.current) {
-          pollingRef.current = setInterval(loadStatus, 30_000)
+        es.onerror = () => {
+          es.close()
+          esRef.current = null
+          retryCountRef.current++
+          if (retryCountRef.current < 3) {
+            const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 8000)
+            setTimeout(connectSSE, delay)
+          } else if (!pollingRef.current) {
+            pollingRef.current = setInterval(loadStatus, 30_000)
+          }
         }
       }
+      connectSSE()
     }
 
     return () => {

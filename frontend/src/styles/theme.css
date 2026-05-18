@@ -53,6 +53,7 @@
   --shadow-glow-ok: 0 0 16px rgba(24, 231, 141, 0.14), 0 0 32px rgba(24, 231, 141, 0.04);
   --shadow-glow-slow: 0 0 16px rgba(255, 177, 26, 0.14), 0 0 32px rgba(255, 177, 26, 0.04);
   --shadow-glow-error: 0 0 16px rgba(255, 77, 94, 0.14), 0 0 32px rgba(255, 77, 94, 0.04);
+  --icon-filter: brightness(1.15);
   --grid-size: 44px;
   --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -103,6 +104,7 @@
   --shadow-glow-ok: 0 0 15px rgba(4, 120, 87, 0.1);
   --shadow-glow-slow: 0 0 15px rgba(180, 83, 9, 0.1);
   --shadow-glow-error: 0 0 15px rgba(220, 38, 38, 0.08);
+  --icon-filter: none;
   --blur-card: 32px;
   --blur-navbar: 28px;
   --blur-panel: 20px;

@@ -50,6 +50,9 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Fprintf(w, "retry: 3000\n\n")
+	flusher.Flush()
+
 	ch := make(chan *DashboardReport, 4)
 	sseClientsMu.Lock()
 	sseClients[ch] = struct{}{}
@@ -70,10 +73,16 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 	latestReportMu.RUnlock()
 
 	ctx := r.Context()
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
 		case report, ok := <-ch:
 			if !ok {
 				return
@@ -109,6 +118,8 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 			handleExportCSV(w, r)
 		case "/api/admin/export/json":
 			handleExportJSON(w, r)
+		case "/api/admin/providers/fetch-models":
+			handleFetchModels(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -129,6 +140,7 @@ func registerAPIRoutes(mux *http.ServeMux, adminToken string) {
 		"/api/admin/alerts/events",
 		"/api/admin/export/csv",
 		"/api/admin/export/json",
+		"/api/admin/providers/fetch-models",
 		"/api/config",
 		"/api/providers",
 		"/api/probe",
@@ -333,6 +345,57 @@ func handleProviders(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func handleFetchModels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ProviderID string `json:"provider_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cfg := GetConfig()
+	var target *Provider
+	for i, p := range cfg.Providers {
+		if p.ID == req.ProviderID || p.Name == req.ProviderID {
+			target = &cfg.Providers[i]
+			break
+		}
+	}
+	if target == nil {
+		writeJSONError(w, http.StatusNotFound, "provider not found")
+		return
+	}
+
+	models, err := FetchModels(*target)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("fetch models failed: %v", err))
+		return
+	}
+
+	updated := *target
+	updated.Models = models
+	if err := UpdateProvider(target.ID, updated); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":        "ok",
+		"provider_id":   target.ID,
+		"provider_name": target.Name,
+		"models":        models,
+		"count":         len(models),
+	})
 }
 
 func handleProbe(w http.ResponseWriter, r *http.Request) {

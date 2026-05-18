@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { getExportDownloadURL } from '../api'
+import { getExportDownloadURL, fetchProviderModels } from '../api'
 
 const PROVIDER_TYPES = [
   'openai', 'anthropic', 'deepseek', 'google', 'ollama',
@@ -64,7 +64,7 @@ export default function ConfigPanel({
       ...form,
       models: form.models.split(/[,\n]+/).map(s => s.trim()).filter(Boolean),
     }
-    if (!provider.name || !provider.api_endpoint || provider.models.length === 0) return
+    if (!provider.name || !provider.api_endpoint) return
 
     setSavingProvider(true)
     try {
@@ -184,8 +184,8 @@ function GeneralSettings({ config, onChange }) {
     { key: 'provider_concurrency', label: '单 Provider 并发', type: 'number', default: 1, min: 1 },
     { key: 'history_size', label: '历史条长度', type: 'number', default: 30, min: 1 },
     { key: 'stats_window_days', label: '统计窗口天数', type: 'number', default: 7, min: 1 },
-    { key: 'probe_prompt', label: '探测提示词', type: 'text', default: '只回复 OK 两个字母。' },
-    { key: 'probe_system_prompt', label: '探测系统提示词', type: 'text', default: '你是一个模型连通性探针。请只回复 OK，不要解释。' },
+    { key: 'probe_prompt', label: '探测提示词', type: 'text', default: 'ping' },
+    { key: 'probe_system_prompt', label: '探测系统提示词', type: 'text', default: 'Reply pang.' },
     { key: 'show_curve_chart', label: '显示延迟曲线', type: 'checkbox', default: true },
     { key: 'show_error_detail', label: '显示错误详情', type: 'checkbox', default: true },
     { key: 'auto_check_interval_seconds', label: '自动检测间隔 (秒, 0=关闭)', type: 'number', default: 0, min: 0 },
@@ -290,6 +290,23 @@ function ProviderSection({ providers, showForm, editingId, form, saving, onToggl
 }
 
 function ProviderForm({ form, editing, saving, onSubmit, onCancel, onChange }) {
+  const [fetching, setFetching] = useState(false)
+
+  const handleAutoFetch = async () => {
+    if (!form.name && !editing) return
+    setFetching(true)
+    try {
+      const result = await fetchProviderModels(editing || form.name.toLowerCase().replace(/\s+/g, '_'))
+      if (result.models) {
+        onChange({ ...form, models: result.models.join('\n') })
+      }
+    } catch (e) {
+      alert('自动获取模型失败：' + (e.body || e.message))
+    } finally {
+      setFetching(false)
+    }
+  }
+
   return (
     <form className="provider-form" onSubmit={onSubmit}>
       <div className="form-grid compact">
@@ -303,7 +320,23 @@ function ProviderForm({ form, editing, saving, onSubmit, onCancel, onChange }) {
       </div>
       <FormField label="API Endpoint" value={form.api_endpoint} onChange={api_endpoint => onChange({ ...form, api_endpoint })} placeholder="例: https://api.openai.com/v1" required />
       <FormField label="API Key" value={form.api_key} onChange={api_key => onChange({ ...form, api_key })} placeholder="sk-..." type="password" help="编辑时保持 ******** 表示不修改；清空表示删除密钥。" />
-      <FormField label="模型列表" value={form.models} onChange={models => onChange({ ...form, models })} placeholder="每行一个模型，或用逗号分隔" required multiline help="例：gpt-4o、gpt-4o-mini、claude-sonnet-4-6" />
+      <div className="form-field">
+        <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}}>
+          <label style={{margin:0}}>模型列表</label>
+          {editing && (
+            <button type="button" className="btn-small" onClick={handleAutoFetch} disabled={fetching} style={{fontSize:'11px'}}>
+              {fetching ? '获取中...' : '自动获取'}
+            </button>
+          )}
+        </div>
+        <textarea
+          value={form.models}
+          onChange={e => onChange({ ...form, models: e.target.value })}
+          placeholder="留空则保存后自动从 API 获取模型列表"
+          rows={4}
+        />
+        <span className="field-help">每行一个模型，或用逗号分隔。留空则由系统自动获取。</span>
+      </div>
       <FormField label="图标 URL (可选)" value={form.icon} onChange={icon => onChange({ ...form, icon })} placeholder="留空则使用默认图标" />
       <div className="form-actions">
         <button type="button" className="btn-soft" onClick={onCancel} disabled={saving}>取消</button>

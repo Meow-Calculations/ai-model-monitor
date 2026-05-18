@@ -4,8 +4,8 @@ timeout_seconds: 30
 slow_threshold_ms: 8000
 concurrency: 3
 provider_concurrency: 1
-probe_prompt: 只回复 OK 两个字母。
-probe_system_prompt: 你是一个模型连通性探针。请只回复 OK，不要解释。
+probe_prompt: ping
+probe_system_prompt: Reply pang.
 history_size: 30
 stats_window_days: 7
 show_curve_chart: true

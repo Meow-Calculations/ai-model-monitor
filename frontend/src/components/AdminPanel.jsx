@@ -13,7 +13,7 @@ import Dashboard from './Dashboard'
 const ConfigPanel = lazy(() => import('./ConfigPanel'))
 const AlertPanel = lazy(() => import('./AlertPanel'))
 
-export default function AdminPanel({ onLogout }) {
+export default function AdminPanel() {
   const [tab, setTab] = useState('dashboard')
   const [report, setReport] = useState(null)
   const [config, setConfig] = useState(null)
@@ -87,6 +87,9 @@ export default function AdminPanel({ onLogout }) {
   const handleAddProvider = async (provider) => {
     try {
       await api.addProvider(provider)
+      if (!provider.models || provider.models.length === 0) {
+        await api.fetchProviderModels(provider.id || provider.name).catch(() => {})
+      }
       await loadConfig()
     } catch (e) {
       handleAPIError(e)
@@ -105,6 +108,9 @@ export default function AdminPanel({ onLogout }) {
   const handleUpdateProvider = async (id, provider) => {
     try {
       await api.updateProvider(id, provider)
+      if (!provider.models || provider.models.length === 0) {
+        await api.fetchProviderModels(id).catch(() => {})
+      }
       await loadConfig()
     } catch (e) {
       handleAPIError(e)
@@ -190,14 +196,6 @@ export default function AdminPanel({ onLogout }) {
                     开始探测
                   </>
                 )}
-              </button>
-              <button className="btn-logout" onClick={onLogout} aria-label="退出登录">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                  <polyline points="16 17 21 12 16 7" />
-                  <line x1="21" y1="12" x2="9" y2="12" />
-                </svg>
-                退出
               </button>
             </div>
           </div>

@@ -163,7 +163,7 @@ function AppContent() {
               path="/admin"
               element={
                 isAuthenticated
-                  ? <AdminPanel onLogout={handleLogout} />
+                  ? <AdminPanel />
                   : <Navigate to="/admin/login" replace />
               }
             />

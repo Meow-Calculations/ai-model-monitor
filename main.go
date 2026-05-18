@@ -57,6 +57,12 @@ func main() {
 		broadcastReport(report)
 	}
 
+	go func() {
+		if len(cfg.Providers) > 0 {
+			AutoFillAllEmptyProviders()
+		}
+	}()
+
 	staticDir = filepath.Join(baseDir, "static")
 	if _, err := os.Stat(staticDir); os.IsNotExist(err) {
 		staticDir = "static"

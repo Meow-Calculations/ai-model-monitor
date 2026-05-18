@@ -65,8 +65,8 @@ func DefaultConfig() *AppConfig {
 		SlowThresholdMs:     8000,
 		Concurrency:         3,
 		ProviderConcurrency: 1,
-		ProbePrompt:         "只回复 OK 两个字母。",
-		ProbeSystemPrompt:   "你是一个模型连通性探针。请只回复 OK，不要解释。",
+		ProbePrompt:         "ping",
+		ProbeSystemPrompt:   "Reply pang.",
 		HistorySize:         30,
 		StatsWindowDays:     7,
 		ShowCurveChart:      true,
@@ -425,6 +425,26 @@ func AddProvider(p Provider) error {
 	if !replaced {
 		appConfig.Providers = append(appConfig.Providers, p)
 	}
+
+	if len(p.Models) == 0 {
+		go func(provider Provider) {
+			models, err := FetchModels(provider)
+			if err != nil {
+				log.Printf("warn: auto-fetch models for %s (%s): %v", provider.Name, provider.Type, err)
+				return
+			}
+			cfg := GetConfig()
+			for i, existing := range cfg.Providers {
+				if existing.ID == provider.ID {
+					cfg.Providers[i].Models = models
+					SaveConfig(cfg)
+					break
+				}
+			}
+			log.Printf("auto-fetched %d models for %s (%s)", len(models), provider.Name, provider.Type)
+		}(p)
+	}
+
 	return nil
 }
 

@@ -38,7 +38,7 @@ func getProbeHandler(providerType string) probeAPIHandler {
 			buildBody: func(model string, cfg *AppConfig) map[string]interface{} {
 				return map[string]interface{}{
 					"model":      model,
-					"max_tokens": 16,
+					"max_tokens": 4,
 					"system":     cfg.ProbeSystemPrompt,
 					"messages": []map[string]string{
 						{"role": "user", "content": cfg.ProbePrompt},
@@ -77,7 +77,7 @@ func getProbeHandler(providerType string) probeAPIHandler {
 						{"role": "system", "content": cfg.ProbeSystemPrompt},
 						{"role": "user", "content": cfg.ProbePrompt},
 					},
-					"max_tokens":  16,
+					"max_tokens":  4,
 					"temperature": 0,
 				}
 			},
