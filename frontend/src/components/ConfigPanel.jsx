@@ -262,6 +262,7 @@ function ProviderSection({ providers, showForm, editingId, form, saving, onToggl
         <ProviderForm
           form={form}
           editing={Boolean(editingId)}
+          editingId={editingId}
           saving={saving}
           onSubmit={onSubmit}
           onCancel={onCancel}
@@ -289,14 +290,15 @@ function ProviderSection({ providers, showForm, editingId, form, saving, onToggl
   )
 }
 
-function ProviderForm({ form, editing, saving, onSubmit, onCancel, onChange }) {
+function ProviderForm({ form, editing, editingId, saving, onSubmit, onCancel, onChange }) {
   const [fetching, setFetching] = useState(false)
 
   const handleAutoFetch = async () => {
-    if (!form.name && !editing) return
+    const providerId = editingId || form.name.toLowerCase().replace(/\s+/g, '_')
+    if (!form.name && !editingId) return
     setFetching(true)
     try {
-      const result = await fetchProviderModels(editing || form.name.toLowerCase().replace(/\s+/g, '_'))
+      const result = await fetchProviderModels(providerId)
       if (result.models) {
         onChange({ ...form, models: result.models.join('\n') })
       }
