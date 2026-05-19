@@ -12,7 +12,7 @@
 /* === ≤ 1024px: Tablet Landscape === */
 @media (max-width: 1024px) {
   .provider-grid {
-    grid-template-columns: 1fr;
+    column-count: 1;
   }
 
   .metric-grid {

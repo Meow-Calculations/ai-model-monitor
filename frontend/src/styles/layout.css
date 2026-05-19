@@ -529,10 +529,8 @@
 }
 
 .provider-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 24px;
-  align-items: start;
+  column-count: 2;
+  column-gap: 24px;
 }
 
 .glass-card {
