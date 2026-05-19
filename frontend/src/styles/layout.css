@@ -529,10 +529,8 @@
 }
 
 .provider-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 24px;
-  align-items: start;
+  column-count: 2;
+  column-gap: 24px;
 }
 
 .glass-card {
@@ -545,7 +543,7 @@
 }
 
 .provider-card {
-  margin: 0;
+  margin: 0 0 24px;
   break-inside: avoid;
   overflow: hidden;
   animation: fadeInUp 0.6s ease backwards;
@@ -572,9 +570,10 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 20px 24px;
+  padding: 20px 24px 24px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-header);
+  margin-bottom: 4px;
 }
 
 .provider-icon {
